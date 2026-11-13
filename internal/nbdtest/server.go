@@ -123,21 +123,28 @@ type Server struct {
 // Start listens on a Unix socket in a temporary directory and returns its
 // path. The server stops when the test ends.
 func (s *Server) Start(t testing.TB) string {
+	path, stop, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	return path
+}
+
+// Listen serves on a Unix socket in a new temporary directory, until stop.
+func (s *Server) Listen() (path string, stop func(), err error) {
 	// Unix socket paths are short (104 bytes on macOS): t.TempDir is too deep.
 	dir, err := os.MkdirTemp("", "nbd")
 	if err != nil {
-		t.Fatal(err)
+		return "", nil, err
 	}
-	path := filepath.Join(dir, "s")
+	path = filepath.Join(dir, "s")
 	l, err := net.Listen("unix", path)
 	if err != nil {
-		t.Fatal(err)
+		os.RemoveAll(dir)
+		return "", nil, err
 	}
 	s.listener = l
-	t.Cleanup(func() {
-		l.Close()
-		os.RemoveAll(dir)
-	})
 	go func() {
 		for {
 			c, err := l.Accept()
@@ -158,7 +165,10 @@ func (s *Server) Start(t testing.TB) string {
 			}()
 		}
 	}()
-	return path
+	return path, func() {
+		l.Close()
+		os.RemoveAll(dir)
+	}, nil
 }
 
 // Violations returns the forbidden accesses the client attempted.
