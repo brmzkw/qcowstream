@@ -85,3 +85,7 @@ var (
 	// than given, or failed. The stream is partial and must be discarded.
 	ErrIncompleteWrite = errors.New("qcowstream: incomplete write")
 )
+
+// ErrUnstableSource reports a region source that changed between walks, or
+// cannot be walked more than once.
+var ErrUnstableSource = errors.New("qcowstream: unstable source")

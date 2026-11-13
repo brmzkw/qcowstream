@@ -2,6 +2,7 @@ package qcowstream
 
 import (
 	"context"
+	"fmt"
 )
 
 // ImagePlan is the complete, immutable layout of one image. It is computed
@@ -15,6 +16,10 @@ type ImagePlan struct {
 	sourceBytes   uint64
 	memory        uint64
 	walks         int
+
+	// touchedL1 marks L1 entries with an L2 table; nil means all of them.
+	touchedL1 bitset
+	prints    walkPrints
 }
 
 // PlanInfo describes a plan. All sizes are in bytes.
@@ -73,7 +78,17 @@ func (p *ImagePlan) Info() PlanInfo {
 // Size returns the exact number of bytes Write emits.
 func (p *ImagePlan) Size() uint64 { return p.layout.imageSize }
 
-func (p *ImagePlan) writeWalks() int { return 0 }
+func (p *ImagePlan) writeWalks() int {
+	if p.opts.Mode == Full {
+		return 0
+	}
+	return 2 // L2 tables, then data
+}
+
+// touched reports whether L1 entry j has an L2 table.
+func (p *ImagePlan) touched(j uint64) bool {
+	return p.touchedL1 == nil || p.touchedL1.has(j)
+}
 
 // Plan validates the options, chooses the geometry and lays out the image. It
 // reads no payload. Every error it can detect is reported here, before any
@@ -85,8 +100,8 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, canceled(ctx)
 	}
-	if opts.Mode != Full {
-		return nil, invalid("incremental images are not supported yet")
+	if opts.Mode == Incremental {
+		return planIncremental(ctx, ext, opts)
 	}
 	cs := opts.ClusterSize
 	if cs == ClusterSizeAuto {
@@ -96,15 +111,118 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n := headerBytes(opts.BackingFile, backingFormat(opts)); n > cs {
-		return nil, invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
+	if err := checkHeaderFits(opts, cs); err != nil {
+		return nil, err
 	}
 	lay, err := newLayout(geo, geo.l1Entries, geo.guestClusters)
 	if err != nil {
 		return nil, err
 	}
 	p := &ImagePlan{geo: geo, layout: lay, sourceBytes: opts.VirtualSize}
-	opts.ClusterSize = cs
+	return p.finish(opts)
+}
+
+// planIncremental walks the changed regions twice: once to validate them and
+// find their alignment, which decides the cluster size, and once to count
+// clusters and mark L1 entries at that size. Comparing the fingerprints of
+// both walks rejects sources that cannot replay, before any output.
+func planIncremental(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
+	var align uint64 // 0: no constraint yet
+	first, err := MergeExtents(ctx, ext.Changed, opts.VirtualSize, func(e Extent) error {
+		if a := boundaryAlignment(e, opts.VirtualSize); a != 0 && (align == 0 || a < align) {
+			align = a
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	cs, err := chooseClusterSize(opts, align)
+	if err != nil {
+		return nil, err
+	}
+	geo, err := newGeometry(opts.VirtualSize, cs)
+	if ge, ok := err.(*GranularityError); ok {
+		ge.Alignment = align
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := checkHeaderFits(opts, cs); err != nil {
+		return nil, err
+	}
+
+	touched := newBitset(geo.l1Entries)
+	var data uint64
+	prints, err := geo.walkRuns(ctx, ext, func(r clusterRun) error {
+		data += r.count
+		touched.setRange(r.first/geo.l2Entries, (r.first+r.count-1)/geo.l2Entries+1)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if prints.changed != first {
+		return nil, fmt.Errorf("%w: the changed regions differ between two walks; the source must be replayable and stable",
+			ErrUnstableSource)
+	}
+	lay, err := newLayout(geo, touched.count(), data)
+	if err != nil {
+		return nil, err
+	}
+	p := &ImagePlan{
+		geo: geo, layout: lay, sourceBytes: first.Bytes, walks: 2,
+		touchedL1: touched, prints: prints, backingFormat: "qcow2",
+	}
+	return p.finish(opts)
+}
+
+// chooseClusterSize picks the cluster size for regions whose boundaries are
+// multiples of align (0 for no constraint).
+func chooseClusterSize(opts Options, align uint64) (uint64, error) {
+	if cs := opts.ClusterSize; cs != ClusterSizeAuto {
+		if align != 0 && align < cs {
+			return 0, &GranularityError{
+				ClusterSize: cs, Alignment: align, MinClusterSize: minClusterSizeFor(opts.VirtualSize),
+				Reason: fmt.Sprintf("changed regions are aligned to %d bytes, finer than the %d-byte clusters; "+
+					"filling the clusters would read unchanged bytes. Use a cluster size of at most %d, "+
+					"or a source with coarser tracking (Extended L2 subclusters are not supported)", align, cs, align),
+			}
+		}
+		return cs, nil
+	}
+	cs := uint64(autoClusterSize)
+	if align != 0 {
+		cs = min(cs, align)
+	}
+	if cs < MinClusterSize {
+		return 0, &GranularityError{
+			Alignment: align, MinClusterSize: minClusterSizeFor(opts.VirtualSize),
+			Reason: fmt.Sprintf("changed regions are aligned to %d bytes, below the %d-byte QCOW2 minimum cluster size",
+				align, MinClusterSize),
+		}
+	}
+	if min := minClusterSizeFor(opts.VirtualSize); min == 0 || cs < min {
+		return 0, &GranularityError{
+			ClusterSize: cs, Alignment: align, MinClusterSize: min,
+			Reason: fmt.Sprintf("changed regions are aligned to %d bytes, but a %d-byte disk needs clusters of at least %d bytes "+
+				"for its L1 table. Standard L2 tables cannot represent this; it needs Extended L2 subclusters "+
+				"(not supported) or a source with coarser tracking", align, opts.VirtualSize, min),
+		}
+	}
+	return cs, nil
+}
+
+func checkHeaderFits(opts Options, cs uint64) error {
+	if n := headerBytes(opts.BackingFile, backingFormat(opts)); n > cs {
+		return invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
+	}
+	return nil
+}
+
+// finish records the options with their defaults and checks the budget.
+func (p *ImagePlan) finish(opts Options) (*ImagePlan, error) {
+	opts.ClusterSize = p.geo.clusterSize
 	if err := p.setResources(&opts); err != nil {
 		return nil, err
 	}
@@ -133,7 +251,7 @@ func (p *ImagePlan) setResources(opts *Options) error {
 	// Fixed overhead covers the plan and the walkers; one cluster buffers
 	// metadata while it is emitted.
 	const overhead = 64 << 10
-	p.memory, err = sum(overhead, cs, payload)
+	p.memory, err = sum(overhead, cs, payload, p.touchedL1.bytes())
 	if err != nil {
 		return err
 	}

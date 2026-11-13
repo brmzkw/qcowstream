@@ -24,6 +24,9 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 	if p == nil {
 		return Stats{}, invalid("nil plan")
 	}
+	if p.opts.Mode == Incremental {
+		return Stats{}, invalid("writing incremental images is not supported yet")
+	}
 	if (ext.Changed == nil) != (p.opts.Mode == Full) {
 		return Stats{}, invalid("region sources do not match the %v plan", p.opts.Mode)
 	}

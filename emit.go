@@ -146,9 +146,6 @@ func (p *ImagePlan) emitL1(e *emitter, buf []byte) error {
 	return nil
 }
 
-// touched reports whether L1 entry j has an L2 table.
-func (p *ImagePlan) touched(j uint64) bool { return true }
-
 // emitFullL2 writes the L2 tables of a full image without zero information:
 // guest cluster g maps to data cluster g.
 func (p *ImagePlan) emitFullL2(e *emitter, buf []byte) error {
