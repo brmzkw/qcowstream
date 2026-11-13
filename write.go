@@ -54,13 +54,17 @@ func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err er
 	if err := p.emitL1(e, buf); err != nil {
 		return st, err
 	}
-	d := newDataWriter(e, src, p)
-	defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.clusters }()
 	if p.touchedL1 == nil {
 		if err := p.emitFullL2(e, buf); err != nil {
 			return st, err
 		}
-		return st, d.run(0, p.geo.guestClusters)
+		d := newDataWriter(e, src, p)
+		defer d.close()
+		defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.emitted }()
+		if err := d.run(0, p.geo.guestClusters); err != nil {
+			return st, err
+		}
+		return st, d.flush()
 	}
 
 	st.Walks++
@@ -68,6 +72,9 @@ func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err er
 		return st, err
 	}
 	st.Walks++
+	d := newDataWriter(e, src, p)
+	defer d.close()
+	defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.emitted }()
 	prints, err := p.geo.walkRuns(e.ctx, ext, func(r clusterRun) error {
 		if r.zero {
 			return nil
@@ -83,7 +90,7 @@ func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err er
 	if prints != p.prints || d.clusters != p.layout.dataClusters {
 		return st, p.unstable("the data walk differs from the plan")
 	}
-	return st, nil
+	return st, d.flush()
 }
 
 func (p *ImagePlan) unstable(what string) error {
@@ -144,42 +151,6 @@ func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
 	}
 	if prints != p.prints || tables != l.l2Clusters || k != l.dataClusters {
 		return p.unstable("the L2 walk differs from the plan")
-	}
-	return nil
-}
-
-// dataWriter reads runs of data clusters and emits them in guest order.
-type dataWriter struct {
-	e        *emitter
-	src      Reader
-	p        *ImagePlan
-	buf      []byte
-	read     uint64
-	clusters uint64
-}
-
-func newDataWriter(e *emitter, src Reader, p *ImagePlan) *dataWriter {
-	return &dataWriter{e: e, src: src, p: p, buf: make([]byte, p.opts.BufferSize)}
-}
-
-// run emits guest clusters [first, first+count). The last cluster of the disk
-// is zero-padded past the virtual size.
-func (d *dataWriter) run(first, count uint64) error {
-	cs, vs := d.p.geo.clusterSize, d.p.geo.virtualSize
-	pos, end := first*cs, min((first+count)*cs, vs)
-	for pos < end {
-		n := min(uint64(len(d.buf)), end-pos)
-		chunk := d.buf[:ceilDiv(n, cs)*cs]
-		if err := readFull(d.e.ctx, d.src, chunk[:n], pos); err != nil {
-			return err
-		}
-		clear(chunk[n:])
-		if err := d.e.write(chunk); err != nil {
-			return err
-		}
-		d.read += n
-		d.clusters += uint64(len(chunk)) / cs
-		pos += n
 	}
 	return nil
 }
