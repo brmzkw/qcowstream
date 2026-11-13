@@ -108,6 +108,7 @@ func validateOptions(opts *Options, ext Extents) error {
 		if opts.BackingFormat != "" && opts.BackingFormat != "qcow2" {
 			return invalid("backing format %q is not supported, only qcow2", opts.BackingFormat)
 		}
+		opts.BackingFormat = "qcow2"
 	default:
 		return invalid("unknown mode %v", opts.Mode)
 	}

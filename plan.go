@@ -12,9 +12,8 @@ type ImagePlan struct {
 	geo    geometry
 	layout layout
 
-	backingFormat string
-	sourceBytes   uint64
-	memory        uint64
+	sourceBytes uint64
+	memory      uint64
 
 	// touchedL1 marks L1 entries with an L2 table; nil means all of them.
 	touchedL1    bitset
@@ -59,7 +58,7 @@ func (p *ImagePlan) Info() PlanInfo {
 		ClusterSize:           p.geo.clusterSize,
 		ImageSize:             p.layout.imageSize,
 		BackingFile:           p.opts.BackingFile,
-		BackingFormat:         p.backingFormat,
+		BackingFormat:         p.opts.BackingFormat,
 		GuestClusters:         p.geo.guestClusters,
 		DataClusters:          p.layout.dataClusters,
 		ZeroClusters:          p.zeroClusters,
@@ -202,7 +201,7 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 	}
 	p := &ImagePlan{
 		geo: geo, layout: lay, sourceBytes: source, zeroClusters: zero,
-		touchedL1: touched, prints: prints, backingFormat: backingFormat(opts), hasZeros: ext.Zeros != nil,
+		touchedL1: touched, prints: prints, hasZeros: ext.Zeros != nil,
 	}
 	return p.finish(opts)
 }
@@ -247,7 +246,7 @@ func chooseClusterSize(opts Options, align uint64) (uint64, error) {
 }
 
 func checkHeaderFits(opts Options, cs uint64) error {
-	if n := headerBytes(opts.BackingFile, backingFormat(opts)); n > cs {
+	if n := headerBytes(opts.BackingFile, opts.BackingFormat); n > cs {
 		return invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
 	}
 	return nil
@@ -292,11 +291,4 @@ func (p *ImagePlan) setResources(opts *Options) error {
 		return &MemoryBudgetError{Required: p.memory, Limit: opts.MemoryLimit}
 	}
 	return nil
-}
-
-func backingFormat(opts Options) string {
-	if opts.Mode == Incremental {
-		return "qcow2"
-	}
-	return ""
 }

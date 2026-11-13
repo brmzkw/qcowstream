@@ -62,11 +62,11 @@ func (p *ImagePlan) header(buf []byte) []byte {
 	be.PutUint32(buf[100:], headerLength)
 
 	off := headerLength
-	if p.backingFormat != "" {
+	if p.opts.BackingFormat != "" {
 		be.PutUint32(buf[off:], extBackingFormat)
-		be.PutUint32(buf[off+4:], uint32(len(p.backingFormat)))
-		copy(buf[off+extHeaderBytes:], p.backingFormat)
-		off += extHeaderBytes + align8(len(p.backingFormat))
+		be.PutUint32(buf[off+4:], uint32(len(p.opts.BackingFormat)))
+		copy(buf[off+extHeaderBytes:], p.opts.BackingFormat)
+		off += extHeaderBytes + align8(len(p.opts.BackingFormat))
 	}
 	be.PutUint32(buf[off:], extEnd) // end of extensions: type 0, length 0
 	off += extHeaderBytes
