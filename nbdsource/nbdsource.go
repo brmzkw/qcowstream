@@ -177,10 +177,6 @@ const (
 	statusBufferSize = 1<<20 + 4096
 )
 
-// MemoryUse returns the most scratch memory the source holds with n read
-// connections and its status connections, outside the qcowstream budget.
-func MemoryUse(n int) uint64 { return uint64(n)*readBufferSize + 3*statusBufferSize }
-
 // interruptOnCancel makes blocked I/O on c fail when ctx is done. The
 // connection is unusable afterwards.
 func interruptOnCancel(ctx context.Context, c *nbd.Conn) func() bool {
@@ -252,10 +248,7 @@ func (s *Source) Close() error {
 		s.dirty.close()
 	}
 	if s.zeros != nil {
-		s.zeros.alloc.close()
-		if s.zeros.dirty != nil {
-			s.zeros.dirty.close()
-		}
+		s.zeros.close()
 	}
 	var wg sync.WaitGroup
 	for range s.opts.Connections {

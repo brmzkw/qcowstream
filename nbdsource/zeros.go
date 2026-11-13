@@ -15,13 +15,12 @@ import (
 // elsewhere. It walks its own bitmap connection, so it can run in lockstep
 // with Changed.
 type zeroRegions struct {
-	s     *Source
 	alloc *statusConn
 	dirty *statusConn // nil in full mode
 }
 
 func (s *Source) openZeros(ctx context.Context) error {
-	z := &zeroRegions{s: s, alloc: &statusConn{s: s, context: "base:allocation"}}
+	z := &zeroRegions{alloc: &statusConn{s: s, context: "base:allocation"}}
 	if err := z.alloc.acquire(ctx); errors.Is(err, ErrMissingContext) {
 		return nil // no zero information
 	} else if err != nil {
@@ -32,6 +31,13 @@ func (s *Source) openZeros(ctx context.Context) error {
 	}
 	s.zeros = z
 	return nil
+}
+
+func (z *zeroRegions) close() {
+	z.alloc.close()
+	if z.dirty != nil {
+		z.dirty.close()
+	}
 }
 
 // Zeros returns the regions the server reports as reading zeros, or nil
@@ -55,11 +61,11 @@ func (z *zeroRegions) Walk(ctx context.Context, yield func(qcowstream.Extent) er
 		})
 	}
 	if z.dirty == nil {
-		return query(0, z.s.size)
+		return query(0, z.alloc.s.size)
 	}
 	z.dirty.mu.Lock()
 	defer z.dirty.mu.Unlock()
-	return z.dirty.walk(ctx, 0, z.s.size, func(off, n uint64, flags uint32) error {
+	return z.dirty.walk(ctx, 0, z.alloc.s.size, func(off, n uint64, flags uint32) error {
 		if !nbdmeta.DirtyBitmapFlags(flags).Dirty() {
 			return nil
 		}
