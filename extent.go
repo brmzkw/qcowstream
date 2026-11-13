@@ -56,8 +56,6 @@ type Fingerprint struct {
 type merger struct {
 	size    uint64
 	emit    func(Extent) error
-	prevEnd uint64
-	seen    bool
 	pending Extent
 	have    bool
 	h       hash.Hash
@@ -80,12 +78,10 @@ func (m *merger) add(e Extent) error {
 	if end > m.size {
 		return fmt.Errorf("%w: extent [%d, %d) ends past the virtual size %d", ErrInvalidRegion, e.Offset, end, m.size)
 	}
-	if m.seen && e.Offset < m.prevEnd {
+	if m.have && e.Offset < m.pending.End() {
 		return fmt.Errorf("%w: extent at offset %d is out of order or overlaps the previous one ending at %d",
-			ErrInvalidRegion, e.Offset, m.prevEnd)
+			ErrInvalidRegion, e.Offset, m.pending.End())
 	}
-	m.seen = true
-	m.prevEnd = end
 	if m.have && m.pending.End() == e.Offset {
 		m.pending.Length += e.Length
 		return nil
