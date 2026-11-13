@@ -34,7 +34,8 @@ type Image struct {
 	BackingFormat string
 	L1Size        uint64
 	L2Tables      int
-	clusters      []clusterRef // per guest cluster
+	guest         uint64                // guest clusters
+	clusters      map[uint64]clusterRef // non-absent guest clusters
 }
 
 type clusterRef struct {
@@ -161,7 +162,7 @@ func Check(img []byte) (*Image, error) {
 			return nil, err
 		}
 	}
-	im.clusters = make([]clusterRef, guestClusters)
+	im.guest, im.clusters = guestClusters, map[uint64]clusterRef{}
 	for j := range im.L1Size {
 		e := be.Uint64(img[l1Off+j*8:])
 		if e == 0 {
@@ -241,7 +242,41 @@ func (im *Image) parseExtensions(start, end uint64) error {
 func (im *Image) Kind(g uint64) Kind { return im.clusters[g].kind }
 
 // GuestClusters returns the number of guest clusters.
-func (im *Image) GuestClusters() uint64 { return uint64(len(im.clusters)) }
+func (im *Image) GuestClusters() uint64 { return im.guest }
+
+// Allocated returns the number of data and zero-flagged clusters.
+func (im *Image) Allocated() (data, zero uint64) {
+	for _, c := range im.clusters {
+		if c.kind == Data {
+			data++
+		} else {
+			zero++
+		}
+	}
+	return data, zero
+}
+
+// Read returns n bytes of the virtual disk at off, with absent clusters
+// read from backing, or as zeros when backing is nil.
+func (im *Image) Read(off, n uint64, backing func(off, n uint64) []byte) []byte {
+	out := make([]byte, n)
+	cs := im.ClusterSize
+	for pos := off; pos < off+n; {
+		g := pos / cs
+		end := min((g+1)*cs, off+n, im.VirtualSize)
+		c := im.clusters[g]
+		switch c.kind {
+		case Data:
+			copy(out[pos-off:], im.raw[c.host+pos-g*cs:c.host+end-g*cs])
+		case Absent:
+			if backing != nil {
+				copy(out[pos-off:], backing(pos, end-pos))
+			}
+		}
+		pos = end
+	}
+	return out
+}
 
 // Materialize returns the virtual disk content. Absent clusters come from
 // backing, which must hold the parent's virtual content, or are zeros when
@@ -249,8 +284,9 @@ func (im *Image) GuestClusters() uint64 { return uint64(len(im.clusters)) }
 func (im *Image) Materialize(backing []byte) []byte {
 	out := make([]byte, im.VirtualSize)
 	cs := im.ClusterSize
-	for g, c := range im.clusters {
-		lo := uint64(g) * cs
+	for g := range im.guest {
+		c := im.clusters[g]
+		lo := g * cs
 		hi := min(lo+cs, im.VirtualSize)
 		switch c.kind {
 		case Data:
@@ -267,8 +303,8 @@ func (im *Image) Materialize(backing []byte) []byte {
 // DataTail returns the bytes stored past the virtual end in the last
 // cluster, which must be zero.
 func (im *Image) DataTail() []byte {
-	n := uint64(len(im.clusters))
-	if n == 0 || im.clusters[n-1].kind != Data {
+	n := im.guest
+	if im.clusters[n-1].kind != Data {
 		return nil
 	}
 	c := im.clusters[n-1]

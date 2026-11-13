@@ -62,6 +62,7 @@ type merger struct {
 	have    bool
 	h       hash.Hash
 	fp      Fingerprint
+	buf     [16]byte // kept here: a local would escape to the heap per extent
 }
 
 func newMerger(size uint64, emit func(Extent) error) *merger {
@@ -102,10 +103,9 @@ func (m *merger) flush() error {
 	}
 	e := m.pending
 	m.have = false
-	var buf [16]byte
-	binary.BigEndian.PutUint64(buf[:8], e.Offset)
-	binary.BigEndian.PutUint64(buf[8:], e.Length)
-	m.h.Write(buf[:])
+	binary.BigEndian.PutUint64(m.buf[:8], e.Offset)
+	binary.BigEndian.PutUint64(m.buf[8:], e.Length)
+	m.h.Write(m.buf[:])
 	m.fp.Extents++
 	m.fp.Bytes += e.Length
 	if m.emit != nil {
