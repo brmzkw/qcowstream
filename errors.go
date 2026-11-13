@@ -75,3 +75,13 @@ func (e *MemoryBudgetError) Error() string {
 }
 
 func (e *MemoryBudgetError) Is(target error) bool { return target == ErrMemoryBudget }
+
+var (
+	// ErrIncompleteRead reports a source that returned fewer bytes than
+	// required, or failed.
+	ErrIncompleteRead = errors.New("qcowstream: incomplete read")
+
+	// ErrIncompleteWrite reports a destination that accepted fewer bytes
+	// than given, or failed. The stream is partial and must be discarded.
+	ErrIncompleteWrite = errors.New("qcowstream: incomplete write")
+)

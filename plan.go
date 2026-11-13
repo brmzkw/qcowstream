@@ -96,6 +96,9 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if n := headerBytes(opts.BackingFile, backingFormat(opts)); n > cs {
+		return nil, invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
+	}
 	lay, err := newLayout(geo, geo.l1Entries, geo.guestClusters)
 	if err != nil {
 		return nil, err
@@ -138,4 +141,11 @@ func (p *ImagePlan) setResources(opts *Options) error {
 		return &MemoryBudgetError{Required: p.memory, Limit: opts.MemoryLimit}
 	}
 	return nil
+}
+
+func backingFormat(opts Options) string {
+	if opts.Mode == Incremental {
+		return "qcow2"
+	}
+	return ""
 }
