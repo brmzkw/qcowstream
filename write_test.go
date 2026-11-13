@@ -5,25 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
-
-// randomDisk returns deterministic pseudo-random content.
-func randomDisk(size uint64, seed uint64) []byte {
-	r := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
-	b := make([]byte, size)
-	for i := 0; i+8 <= len(b); i += 8 {
-		v := r.Uint64()
-		for j := range 8 {
-			b[i+j] = byte(v >> (8 * j))
-		}
-	}
-	return b
-}
 
 // writerOnly hides any method besides Write, so the writer cannot seek.
 type writerOnly struct{ w io.Writer }
@@ -63,7 +50,7 @@ func TestWriteFull(t *testing.T) {
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			disk := randomDisk(c.size, uint64(i))
+			disk := testutil.RandomDisk(c.size, uint64(i))
 			img, p, st := generate(t, disk, qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, ClusterSize: c.cs})
 			im, err := qcow2test.Check(img)
 			if err != nil {
@@ -87,7 +74,7 @@ func TestWriteFull(t *testing.T) {
 }
 
 func TestWriteFullDeterministic(t *testing.T) {
-	disk := randomDisk(3*MiB+512, 7)
+	disk := testutil.RandomDisk(3*MiB+512, 7)
 	ref, _, _ := generate(t, disk, qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, ClusterSize: 64 * KiB})
 	for _, bs := range []uint64{64 * KiB, 192 * KiB, 8 * MiB} {
 		img, _, _ := generate(t, disk, qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, ClusterSize: 64 * KiB, BufferSize: bs})
@@ -127,8 +114,7 @@ func (s *shortReader) ReadAtContext(_ context.Context, p []byte, off int64) (int
 
 func planOf(t *testing.T, size, cs uint64) *qcowstream.ImagePlan {
 	t.Helper()
-	p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
-		Mode: qcowstream.Full, VirtualSize: size, ClusterSize: cs})
+	p, err := planFull(t, size, cs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +122,7 @@ func planOf(t *testing.T, size, cs uint64) *qcowstream.ImagePlan {
 }
 
 func TestWriteShortReadsAreRetried(t *testing.T) {
-	disk := randomDisk(256*KiB, 3)
+	disk := testutil.RandomDisk(256*KiB, 3)
 	p := planOf(t, uint64(len(disk)), 4*KiB)
 	var out bytes.Buffer
 	if _, err := qcowstream.Write(context.Background(), &out, &shortReader{r: bytes.NewReader(disk)}, qcowstream.Extents{}, p); err != nil {
@@ -158,7 +144,7 @@ func (f readerFunc) ReadAtContext(ctx context.Context, p []byte, off int64) (int
 }
 
 func TestWriteIncompleteRead(t *testing.T) {
-	disk := randomDisk(256*KiB, 3)
+	disk := testutil.RandomDisk(256*KiB, 3)
 	boom := errors.New("disk on fire")
 	cases := map[string]qcowstream.Reader{
 		"source too small": qcowstream.NewReaderAtSource(bytes.NewReader(disk[:100*KiB]), 100*KiB),
@@ -185,7 +171,7 @@ func TestWriteIncompleteRead(t *testing.T) {
 }
 
 func TestWriteRejectsSizeMismatch(t *testing.T) {
-	disk := randomDisk(256*KiB, 3)
+	disk := testutil.RandomDisk(256*KiB, 3)
 	p := planOf(t, 512*KiB, 4*KiB)
 	_, err := qcowstream.Write(context.Background(), io.Discard, qcowstream.NewReaderAtSource(bytes.NewReader(disk), uint64(len(disk))), qcowstream.Extents{}, p)
 	if !errors.Is(err, qcowstream.ErrInvalidOptions) {
@@ -219,7 +205,7 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 }
 
 func TestWriteIncompleteWrite(t *testing.T) {
-	disk := randomDisk(256*KiB, 3)
+	disk := testutil.RandomDisk(256*KiB, 3)
 	src := qcowstream.NewReaderAtSource(bytes.NewReader(disk), uint64(len(disk)))
 	boom := errors.New("pipe closed")
 	for _, limit := range []int{0, 100, 4096, 200 * 1024} {
@@ -257,7 +243,7 @@ func (w *cancelWriter) Write(p []byte) (int, error) {
 }
 
 func TestWriteCanceledMidStream(t *testing.T) {
-	disk := randomDisk(1*MiB, 3)
+	disk := testutil.RandomDisk(1*MiB, 3)
 	p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
 		Mode: qcowstream.Full, VirtualSize: uint64(len(disk)), ClusterSize: 4 * KiB, BufferSize: 64 * KiB})
 	if err != nil {

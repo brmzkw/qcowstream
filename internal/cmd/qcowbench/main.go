@@ -21,6 +21,7 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 	"github.com/brmzkw/qcowstream/internal/units"
 	"github.com/brmzkw/qcowstream/internal/virtual"
 	"github.com/brmzkw/qcowstream/nbdsource"
@@ -80,7 +81,7 @@ func planOnly(ext qcowstream.Extents, opts qcowstream.Options) result {
 	var p *qcowstream.ImagePlan
 	var err error
 	start := time.Now()
-	alloc := measure(func() { p, err = qcowstream.Plan(context.Background(), ext, opts) })
+	alloc := testutil.Allocated(func() { p, err = qcowstream.Plan(context.Background(), ext, opts) })
 	check(err)
 	info := p.Info()
 	return result{Walks: info.PlanWalks, PlanTime: ms(time.Since(start)), SourceBytes: info.SourceBytes,
@@ -89,7 +90,7 @@ func planOnly(ext qcowstream.Extents, opts qcowstream.Options) result {
 
 func generate(src qcowstream.Reader, ext qcowstream.Extents, opts qcowstream.Options) result {
 	var r result
-	alloc := measure(func() {
+	alloc := testutil.Allocated(func() {
 		start := time.Now()
 		p, err := qcowstream.Plan(context.Background(), ext, opts)
 		check(err)
@@ -156,16 +157,6 @@ func startQemuNBD(size uint64) (string, func()) {
 		_ = cmd.Wait()
 		os.RemoveAll(dir)
 	}
-}
-
-// measure returns the heap bytes allocated while f runs.
-func measure(f func()) uint64 {
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	f()
-	runtime.ReadMemStats(&after)
-	return after.TotalAlloc - before.TotalAlloc
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

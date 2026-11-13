@@ -13,6 +13,7 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 // jitterReader delays each read by a pseudo-random amount, so concurrent
@@ -31,7 +32,7 @@ func (j jitterReader) ReadAtContext(ctx context.Context, p []byte, off int64) (i
 
 func TestConcurrencyDoesNotChangeOutput(t *testing.T) {
 	const cs = 4 * KiB
-	disk := randomDisk(8*MiB+512, 11)
+	disk := testutil.RandomDisk(8*MiB+512, 11)
 	changed := qcowstream.SliceExtents{{0, 1 * MiB}, {2 * MiB, 3 * MiB}, {8 * MiB, 512}}
 	zeros := qcowstream.SliceExtents{{512 * KiB, 64 * KiB}, {3 * MiB, 128 * KiB}}
 	disk = zeroed(disk, zeros)
@@ -101,7 +102,7 @@ func (a *aheadReader) ReadAtContext(_ context.Context, p []byte, off int64) (int
 
 func TestSlowDestinationBoundsReads(t *testing.T) {
 	const n = 4
-	disk := randomDisk(16*MiB, 12)
+	disk := testutil.RandomDisk(16*MiB, 12)
 	p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
 		Mode: qcowstream.Full, VirtualSize: uint64(len(disk)), ClusterSize: 64 * KiB,
 		BufferSize: 64 * KiB, Concurrency: n})
@@ -136,7 +137,7 @@ func waitGoroutines(t *testing.T, base int) {
 }
 
 func TestNoGoroutineLeaks(t *testing.T) {
-	disk := randomDisk(4*MiB, 13)
+	disk := testutil.RandomDisk(4*MiB, 13)
 	plan := func() *qcowstream.ImagePlan {
 		p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
 			Mode: qcowstream.Full, VirtualSize: uint64(len(disk)), ClusterSize: 64 * KiB,
@@ -226,7 +227,7 @@ func (o *overlapProbe) Write(p []byte) (int, error) {
 }
 
 func TestSequentialReadOverlapsWrite(t *testing.T) {
-	disk := randomDisk(2*MiB, 14)
+	disk := testutil.RandomDisk(2*MiB, 14)
 	p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
 		Mode: qcowstream.Full, VirtualSize: uint64(len(disk)), ClusterSize: 64 * KiB, BufferSize: 64 * KiB})
 	if err != nil {

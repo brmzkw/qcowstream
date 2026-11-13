@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/virtual"
 )
 
 func planInc(size, cs uint64, ext qcowstream.ExtentSource) (*qcowstream.ImagePlan, error) {
@@ -104,22 +105,9 @@ func TestPlanIncrementalAutoClusterSize(t *testing.T) {
 	}
 }
 
-// sparseExtents yields count extents of length bytes, one every stride
-// bytes, without storing them.
-type sparseExtents struct{ start, stride, length, count uint64 }
-
-func (s sparseExtents) Walk(ctx context.Context, yield func(qcowstream.Extent) error) error {
-	for i := range s.count {
-		if err := yield(qcowstream.Extent{Offset: s.start + i*s.stride, Length: s.length}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func TestPlanIncremental100TiB(t *testing.T) {
 	// One 64 KiB region every 64 GiB: 1600 L2 tables at 64 KiB clusters.
-	ext := sparseExtents{start: 0, stride: 64 * GiB, length: 64 * KiB, count: 1600}
+	ext := virtual.Strided{Start: 0, Stride: 64 * GiB, Length: 64 * KiB, Count: 1600}
 	p, err := planInc(100*TiB, 64*KiB, ext)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +122,7 @@ func TestPlanIncremental100TiB(t *testing.T) {
 	}
 
 	// 4 KiB tracking cannot be represented on 100 TiB with standard L2.
-	ext4k := sparseExtents{start: 4 * KiB, stride: 1 * GiB, length: 4 * KiB, count: 100}
+	ext4k := virtual.Strided{Start: 4 * KiB, Stride: 1 * GiB, Length: 4 * KiB, Count: 100}
 	for _, cs := range []uint64{qcowstream.ClusterSizeAuto, 4 * KiB, 64 * KiB} {
 		_, err := planInc(100*TiB, cs, ext4k)
 		var ge *qcowstream.GranularityError

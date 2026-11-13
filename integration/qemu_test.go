@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -116,20 +115,6 @@ func (e *qemuEnv) put(t *testing.T, path string, data []byte) {
 	if err := e.c.CopyToContainer(context.Background(), data, path, 0o644); err != nil {
 		t.Fatalf("%s: copy %s: %v", e.Name, path, err)
 	}
-}
-
-func (e *qemuEnv) get(t *testing.T, path string) []byte {
-	t.Helper()
-	r, err := e.c.CopyFileFromContainer(context.Background(), path)
-	if err != nil {
-		t.Fatalf("%s: copy %s: %v", e.Name, path, err)
-	}
-	defer r.Close()
-	var b bytes.Buffer
-	if _, err := io.Copy(&b, r); err != nil {
-		t.Fatal(err)
-	}
-	return b.Bytes()
 }
 
 // dir creates a fresh working directory in the container.

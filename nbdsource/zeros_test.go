@@ -9,6 +9,7 @@ import (
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 	"github.com/brmzkw/qcowstream/nbdsource"
 )
 
@@ -59,10 +60,10 @@ func TestZerosWithoutBaseAllocation(t *testing.T) {
 // extents, and that zero clusters there skip the read.
 func TestZerosIncremental(t *testing.T) {
 	size := 64 * MiB
-	parent := randomDisk(size, 30)
+	parent := testutil.RandomDisk(size, 30)
 	child := bytes.Clone(parent)
 	for i, d := range dirty {
-		copy(child[d.Offset:d.Offset+d.Length], randomDisk(d.Length, uint64(40+i)))
+		copy(child[d.Offset:d.Offset+d.Length], testutil.RandomDisk(d.Length, uint64(40+i)))
 	}
 	zero := []nbdtest.Extent{
 		{Offset: 2 * MiB, Length: 12 * MiB}, // straddles a clean region

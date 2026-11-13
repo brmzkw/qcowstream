@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 func generate(t *testing.T, disk []byte, ext qcowstream.Extents, opts qcowstream.Options, src qcowstream.Reader) []byte {
@@ -46,7 +47,7 @@ func TestSparseFullImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, off := range []uint64{4 * MiB, 20 * MiB} {
-		if _, err := f.WriteAt(randomDisk(1*MiB, off), int64(off)); err != nil {
+		if _, err := f.WriteAt(testutil.RandomDisk(1*MiB, off), int64(off)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -85,11 +86,11 @@ func TestSparseFullImage(t *testing.T) {
 // parent: they must read as zeros through the chain.
 func TestZeroFlaggedIncrement(t *testing.T) {
 	size := 4 * MiB
-	raw0 := randomDisk(size, 50)
-	raw1, changed := apply(raw0, 60,
-		change{off: 0, len: 1 * MiB, zero: true},
-		change{off: 2 * MiB, len: 512 * KiB},
-		change{off: 3 * MiB, len: 1 * MiB, zero: true},
+	raw0 := testutil.RandomDisk(size, 50)
+	raw1, changed := testutil.Apply(raw0, 60,
+		testutil.Change{Offset: 0, Length: 1 * MiB, Zero: true},
+		testutil.Change{Offset: 2 * MiB, Length: 512 * KiB},
+		testutil.Change{Offset: 3 * MiB, Length: 1 * MiB, Zero: true},
 	)
 	zeros := qcowstream.SliceExtents{{Offset: 0, Length: 1 * MiB}, {Offset: 3 * MiB, Length: 1 * MiB}}
 	inc := generate(t, raw1, qcowstream.Extents{Changed: changed, Zeros: zeros},

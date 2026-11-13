@@ -12,6 +12,7 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 // zeroClusters returns the clusters lying entirely inside zeros, computed
@@ -98,7 +99,7 @@ func TestFullSkipsZeroClusters(t *testing.T) {
 		{200*KiB + 100, 2 * KiB}, // unaligned: only the clusters fully inside
 		{1 * MiB, 512},           // the partial last cluster
 	}
-	disk := zeroed(randomDisk(size, 1), zeros)
+	disk := zeroed(testutil.RandomDisk(size, 1), zeros)
 	want := zeroClusters(size, cs, zeros)
 	guard := &zeroGuard{disk: disk, cs: cs, zero: want}
 	img, p := generateWith(t, disk, qcowstream.Extents{Zeros: zeros}, qcowstream.Options{Mode: qcowstream.Full, ClusterSize: cs}, guard)
@@ -131,7 +132,7 @@ func TestFullSkipsZeroClusters(t *testing.T) {
 func TestIncrementalZeroClustersAreFlagged(t *testing.T) {
 	const cs = 64 * KiB
 	size := 4 * MiB
-	parent := randomDisk(size, 2)
+	parent := testutil.RandomDisk(size, 2)
 	changed := qcowstream.SliceExtents{{0, 256 * KiB}, {1 * MiB, 128 * KiB}}
 	zeros := qcowstream.SliceExtents{
 		{64 * KiB, 128 * KiB}, // inside the first change
@@ -168,7 +169,7 @@ func TestIncrementalZeroClustersAreFlagged(t *testing.T) {
 
 func TestIncrementalZerosOutsideChangesChangeNothing(t *testing.T) {
 	size := 4 * MiB
-	disk := randomDisk(size, 4)
+	disk := testutil.RandomDisk(size, 4)
 	changed := qcowstream.SliceExtents{{1 * MiB, 1 * MiB}}
 	opts := qcowstream.Options{Mode: qcowstream.Incremental, ClusterSize: 64 * KiB, BackingFile: "base.qcow2"}
 	src := qcowstream.NewReaderAtSource(bytes.NewReader(disk), uint64(size))
@@ -231,7 +232,7 @@ func TestFileHoles(t *testing.T) {
 	if err := f.Truncate(size); err != nil {
 		t.Fatal(err)
 	}
-	data := randomDisk(1*MiB, 5)
+	data := testutil.RandomDisk(1*MiB, 5)
 	for _, off := range []int64{8 * int64(MiB), 40 * int64(MiB)} {
 		if _, err := f.WriteAt(data, off); err != nil {
 			t.Fatal(err)

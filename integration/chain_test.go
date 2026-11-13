@@ -7,27 +7,8 @@ import (
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
-
-type change struct {
-	off, len uint64
-	zero     bool // write zeros instead of random bytes
-}
-
-// apply returns parent with the changes applied, and the changed extents.
-func apply(parent []byte, seed uint64, changes ...change) ([]byte, qcowstream.SliceExtents) {
-	child := bytes.Clone(parent)
-	var ext qcowstream.SliceExtents
-	for i, c := range changes {
-		if c.zero {
-			clear(child[c.off : c.off+c.len])
-		} else {
-			copy(child[c.off:c.off+c.len], randomDisk(c.len, seed+uint64(i)))
-		}
-		ext = append(ext, qcowstream.Extent{Offset: c.off, Length: c.len})
-	}
-	return child, ext
-}
 
 func incrementalImage(t *testing.T, disk []byte, ext qcowstream.SliceExtents, backing string, cs uint64) []byte {
 	t.Helper()
@@ -58,19 +39,19 @@ func checkAlone(t *testing.T, e *qemuEnv, dir, image string) {
 func TestIncrementalChain(t *testing.T) {
 	const cs = 4 * KiB // one L2 table maps 2 MiB
 	size := 8*MiB + 512
-	raw0 := randomDisk(size, 10)
-	raw1, ext1 := apply(raw0, 20,
-		change{off: 0, len: 4 * KiB},
-		change{off: 2*MiB - 4*KiB, len: 8 * KiB}, // across an L2 boundary
-		change{off: 5 * MiB, len: 64 * KiB},      // changed again in inc-2
-		change{off: 6 * MiB, len: 8 * KiB, zero: true},
-		change{off: 8 * MiB, len: 512}, // partial last cluster
+	raw0 := testutil.RandomDisk(size, 10)
+	raw1, ext1 := testutil.Apply(raw0, 20,
+		testutil.Change{Offset: 0, Length: 4 * KiB},
+		testutil.Change{Offset: 2*MiB - 4*KiB, Length: 8 * KiB}, // across an L2 boundary
+		testutil.Change{Offset: 5 * MiB, Length: 64 * KiB},      // changed again in inc-2
+		testutil.Change{Offset: 6 * MiB, Length: 8 * KiB, Zero: true},
+		testutil.Change{Offset: 8 * MiB, Length: 512}, // partial last cluster
 	)
-	raw2, ext2 := apply(raw1, 30,
-		change{off: 0, len: 4 * KiB, zero: true}, // zeros over data from inc-1
-		change{off: 3 * MiB, len: 16 * KiB, zero: true},
-		change{off: 4*MiB - 4*KiB, len: 4 * KiB}, // last cluster of an L2 table
-		change{off: 5 * MiB, len: 64 * KiB},
+	raw2, ext2 := testutil.Apply(raw1, 30,
+		testutil.Change{Offset: 0, Length: 4 * KiB, Zero: true}, // zeros over data from inc-1
+		testutil.Change{Offset: 3 * MiB, Length: 16 * KiB, Zero: true},
+		testutil.Change{Offset: 4*MiB - 4*KiB, Length: 4 * KiB}, // last cluster of an L2 table
+		testutil.Change{Offset: 5 * MiB, Length: 64 * KiB},
 	)
 	images := map[string][]byte{
 		"base.qcow2":  fullImage(t, raw0, 64*KiB), // the chain mixes cluster sizes
@@ -116,10 +97,10 @@ func TestIncrementalChain(t *testing.T) {
 // replace it instead of falling through to the parent.
 func TestZeroOnlyIncrement(t *testing.T) {
 	size := 4 * MiB
-	raw0 := randomDisk(size, 40)
-	raw1, ext := apply(raw0, 0,
-		change{off: 0, len: 1 * MiB, zero: true},
-		change{off: 3 * MiB, len: 1 * MiB, zero: true},
+	raw0 := testutil.RandomDisk(size, 40)
+	raw1, ext := testutil.Apply(raw0, 0,
+		testutil.Change{Offset: 0, Length: 1 * MiB, Zero: true},
+		testutil.Change{Offset: 3 * MiB, Length: 1 * MiB, Zero: true},
 	)
 	each(t, func(t *testing.T, e *qemuEnv) {
 		dir := e.dir(t)

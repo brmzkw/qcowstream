@@ -7,28 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 const (
 	KiB = uint64(1) << 10
 	MiB = KiB << 10
 )
-
-func randomDisk(size, seed uint64) []byte {
-	r := rand.New(rand.NewPCG(seed, ^seed))
-	b := make([]byte, size)
-	for i := range b {
-		b[i] = byte(r.Uint32())
-	}
-	return b
-}
 
 func generateFull(t *testing.T, w io.Writer, disk []byte, cs uint64) error {
 	t.Helper()
@@ -61,7 +52,7 @@ func checkImage(t *testing.T, e *qemuEnv, dir, image string, want []byte) {
 }
 
 func TestFullImage(t *testing.T) {
-	disk := randomDisk(5*MiB+512, 1)
+	disk := testutil.RandomDisk(5*MiB+512, 1)
 	each(t, func(t *testing.T, e *qemuEnv) {
 		for _, cs := range []uint64{512, 64 * KiB, 2 * MiB} {
 			dir := e.dir(t)
@@ -83,7 +74,7 @@ func TestZeroFullImage(t *testing.T) {
 // TestFullImageThroughPipe streams the image into a separate process through
 // a pipe, which cannot seek, and checks the result is the same image.
 func TestFullImageThroughPipe(t *testing.T) {
-	disk := randomDisk(4*MiB+512, 2)
+	disk := testutil.RandomDisk(4*MiB+512, 2)
 	want := fullImage(t, disk, 64*KiB)
 
 	out := filepath.Join(t.TempDir(), "piped.qcow2")
@@ -125,7 +116,7 @@ func TestFullImageThroughPipe(t *testing.T) {
 // TestFullImageReaderGoesAway closes the reading process mid-stream: the
 // writer must fail, not report success.
 func TestFullImageReaderGoesAway(t *testing.T) {
-	disk := randomDisk(8*MiB, 3)
+	disk := testutil.RandomDisk(8*MiB, 3)
 	cmd := exec.Command("head", "-c", "100000")
 	cmd.Stdout = io.Discard
 	stdin, err := cmd.StdinPipe()

@@ -15,6 +15,7 @@ import (
 
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 var (
@@ -60,7 +61,7 @@ func exitCode(t *testing.T, err error) int {
 }
 
 func TestNBDFullThroughBinary(t *testing.T) {
-	disk := randomDisk(8*MiB, 6)
+	disk := testutil.RandomDisk(8*MiB, 6)
 	srv := &nbdtest.Server{Export: "scsi0", Data: disk, MinBlock: 512, PrefBlock: 4096, MaxBlock: 1 << 20}
 	sock := srv.Start(t)
 	cmd := exec.Command(binary(t), "full", "--nbd-socket", sock, "--export", "scsi0",
@@ -123,7 +124,7 @@ func TestSignalStopsAndCleansUp(t *testing.T) {
 
 func TestBrokenPipe(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "disk.raw")
-	if err := os.WriteFile(path, randomDisk(16*MiB, 7), 0o644); err != nil {
+	if err := os.WriteFile(path, testutil.RandomDisk(16*MiB, 7), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(binary(t), "full", "--source-file", path, "--output", "-")

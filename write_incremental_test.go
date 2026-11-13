@@ -11,19 +11,17 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 // mutate returns a copy of parent where every extent is overwritten: with
 // zeros when zero is true, otherwise with fresh random bytes.
 func mutate(parent []byte, ext qcowstream.SliceExtents, zero bool, seed uint64) []byte {
-	child := bytes.Clone(parent)
+	changes := make([]testutil.Change, len(ext))
 	for i, e := range ext {
-		if zero {
-			clear(child[e.Offset:e.End()])
-			continue
-		}
-		copy(child[e.Offset:e.End()], randomDisk(e.Length, seed+uint64(i)))
+		changes[i] = testutil.Change{Offset: e.Offset, Length: e.Length, Zero: zero}
 	}
+	child, _ := testutil.Apply(parent, seed, changes...)
 	return child
 }
 
@@ -94,7 +92,7 @@ func TestWriteIncremental(t *testing.T) {
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			parent := randomDisk(c.size, uint64(100+i))
+			parent := testutil.RandomDisk(c.size, uint64(100+i))
 			child := mutate(parent, c.ext, c.zero, uint64(200+i))
 			img, st := writeIncremental(t, child, c.ext, c.ext, c.cs)
 
@@ -154,7 +152,7 @@ func TestWriteIncrementalDetectsChangedSource(t *testing.T) {
 		"data walk shrinks":       {a, a, a, {{0, 64 * KiB}}},
 		"data walk misaligned":    {a, a, a, {{0, 32 * KiB}, {1 * MiB, 64 * KiB}}},
 	}
-	disk := randomDisk(4*MiB, 5)
+	disk := testutil.RandomDisk(4*MiB, 5)
 	for name, walks := range cases {
 		t.Run(name, func(t *testing.T) {
 			src := &replays{walks: walks}
@@ -172,7 +170,7 @@ func TestWriteIncrementalDetectsChangedSource(t *testing.T) {
 }
 
 func TestWriteIncrementalDeterministic(t *testing.T) {
-	disk := randomDisk(4*MiB, 9)
+	disk := testutil.RandomDisk(4*MiB, 9)
 	ext := qcowstream.SliceExtents{{64 * KiB, 64 * KiB}, {2 * MiB, 1 * MiB}}
 	a, _ := writeIncremental(t, disk, ext, ext, 64*KiB)
 	b, _ := writeIncremental(t, disk, ext, ext, 64*KiB)

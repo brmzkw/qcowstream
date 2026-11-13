@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,21 +14,13 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 )
 
 const (
 	KiB = uint64(1) << 10
 	MiB = KiB << 10
 )
-
-func randomDisk(size uint64, seed uint64) []byte {
-	r := rand.New(rand.NewPCG(seed, ^seed))
-	b := make([]byte, size)
-	for i := range b {
-		b[i] = byte(r.Uint32())
-	}
-	return b
-}
 
 // fakeFile serves a disk from memory and counts reads.
 type fakeFile struct {
@@ -95,7 +86,7 @@ func writeRegions(t *testing.T, size uint64, ext ...qcowstream.Extent) string {
 
 func TestFullToStdout(t *testing.T) {
 	h := newHarness(t)
-	disk := randomDisk(4*MiB+512, 1)
+	disk := testutil.RandomDisk(4*MiB+512, 1)
 	h.files["disk.raw"] = &fakeFile{data: disk}
 	if rc := h.run("full", "--source-file", "disk.raw", "--cluster-size", "64KiB", "--output", "-"); rc != 0 {
 		t.Fatalf("exit %d: %s", rc, h.stderr.String())
@@ -114,9 +105,9 @@ func TestFullToStdout(t *testing.T) {
 
 func TestIncrementalFromRegionsFile(t *testing.T) {
 	h := newHarness(t)
-	parent := randomDisk(4*MiB, 2)
+	parent := testutil.RandomDisk(4*MiB, 2)
 	child := bytes.Clone(parent)
-	copy(child[1*MiB:2*MiB], randomDisk(1*MiB, 3))
+	copy(child[1*MiB:2*MiB], testutil.RandomDisk(1*MiB, 3))
 	clear(child[3*MiB : 3*MiB+64*KiB])
 	h.files["disk.raw"] = &fakeFile{data: child, holes: qcowstream.SliceExtents{{Offset: 3 * MiB, Length: 64 * KiB}}}
 	regions := writeRegions(t, 4*MiB, qcowstream.Extent{Offset: 1 * MiB, Length: 1 * MiB}, qcowstream.Extent{Offset: 3 * MiB, Length: 64 * KiB})
@@ -214,7 +205,7 @@ func TestRejectsBadFlags(t *testing.T) {
 
 func TestOutputFile(t *testing.T) {
 	h := newHarness(t)
-	disk := randomDisk(1*MiB, 4)
+	disk := testutil.RandomDisk(1*MiB, 4)
 	h.files["disk.raw"] = &fakeFile{data: disk}
 	out := filepath.Join(t.TempDir(), "base.qcow2")
 	if err := os.WriteFile(out, []byte("precious"), 0o644); err != nil {
@@ -237,7 +228,7 @@ func TestOutputFile(t *testing.T) {
 
 func TestFailureRemovesPartialOutput(t *testing.T) {
 	h := newHarness(t)
-	h.files["disk.raw"] = &fakeFile{data: randomDisk(8*MiB, 5), failAt: 3}
+	h.files["disk.raw"] = &fakeFile{data: testutil.RandomDisk(8*MiB, 5), failAt: 3}
 	out := filepath.Join(t.TempDir(), "base.qcow2")
 	if rc := h.run("full", "--source-file", "disk.raw", "--cluster-size", "64KiB", "--buffer-size", "1MiB", "--output", out); rc != exitError {
 		t.Fatalf("exit %d", rc)

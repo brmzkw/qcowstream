@@ -10,6 +10,7 @@ import (
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 	"github.com/brmzkw/qcowstream/nbdsource"
 )
 
@@ -134,10 +135,10 @@ func TestMalformedBlockStatus(t *testing.T) {
 // refuses every read outside the dirty regions, like a Proxmox export.
 func TestIncrementalOverNBD(t *testing.T) {
 	size := 64 * MiB
-	parent := randomDisk(size, 10)
+	parent := testutil.RandomDisk(size, 10)
 	child := bytes.Clone(parent)
 	for i, d := range dirty {
-		copy(child[d.Offset:d.Offset+d.Length], randomDisk(d.Length, uint64(20+i)))
+		copy(child[d.Offset:d.Offset+d.Length], testutil.RandomDisk(d.Length, uint64(20+i)))
 	}
 	clear(child[12*MiB : 14*MiB]) // zeros inside a dirty region are data too
 

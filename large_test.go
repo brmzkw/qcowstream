@@ -3,24 +3,14 @@ package qcowstream_test
 import (
 	"bytes"
 	"context"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 	"github.com/brmzkw/qcowstream/internal/virtual"
 )
-
-// allocated returns the bytes allocated while f runs.
-func allocated(f func()) uint64 {
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	f()
-	runtime.ReadMemStats(&after)
-	return after.TotalAlloc - before.TotalAlloc
-}
 
 // TestPlanFragmented100TiB plans an increment of a million alternating
 // clusters on a 100 TiB disk: memory stays bounded by the L1 summary, not
@@ -33,7 +23,7 @@ func TestPlanFragmented100TiB(t *testing.T) {
 	var p *qcowstream.ImagePlan
 	var err error
 	start := time.Now()
-	alloc := allocated(func() {
+	alloc := testutil.Allocated(func() {
 		p, err = planInc(100*TiB, 64*KiB, changed)
 	})
 	if err != nil {
@@ -66,7 +56,7 @@ func TestWriteSmallIncrementOn100TiB(t *testing.T) {
 	var out bytes.Buffer
 	out.Grow(int(info.ImageSize))
 	var st qcowstream.Stats
-	alloc := allocated(func() {
+	alloc := testutil.Allocated(func() {
 		st, err = qcowstream.Write(context.Background(), &out, disk, ext, p)
 	})
 	if err != nil {

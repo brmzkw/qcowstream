@@ -5,12 +5,12 @@ import (
 	"context"
 	"errors"
 
-	"math/rand/v2"
 	"testing"
 	"time"
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
+	"github.com/brmzkw/qcowstream/internal/testutil"
 	"github.com/brmzkw/qcowstream/nbdsource"
 )
 
@@ -18,15 +18,6 @@ const (
 	KiB = uint64(1) << 10
 	MiB = KiB << 10
 )
-
-func randomDisk(size uint64, seed uint64) []byte {
-	r := rand.New(rand.NewPCG(seed, ^seed))
-	b := make([]byte, size)
-	for i := range b {
-		b[i] = byte(r.Uint32())
-	}
-	return b
-}
 
 func open(t *testing.T, srv *nbdtest.Server, conns int) *nbdsource.Source {
 	t.Helper()
@@ -40,7 +31,7 @@ func open(t *testing.T, srv *nbdtest.Server, conns int) *nbdsource.Source {
 }
 
 func TestReadHonoursBlockSizes(t *testing.T) {
-	disk := randomDisk(4*MiB, 1)
+	disk := testutil.RandomDisk(4*MiB, 1)
 	srv := &nbdtest.Server{Export: "scsi0", Data: disk, MinBlock: 512, PrefBlock: 4096, MaxBlock: 192 * 1024}
 	s := open(t, srv, 1)
 	if s.Size() != uint64(len(disk)) {
@@ -71,7 +62,7 @@ func TestReadHonoursBlockSizes(t *testing.T) {
 }
 
 func TestReadWithoutBlockSizeInfo(t *testing.T) {
-	disk := randomDisk(40*MiB, 2)
+	disk := testutil.RandomDisk(40*MiB, 2)
 	srv := &nbdtest.Server{Export: "scsi0", Data: disk}
 	s := open(t, srv, 1)
 	buf := make([]byte, 40*MiB)
@@ -117,7 +108,7 @@ func TestCancelInterruptsStalledServer(t *testing.T) {
 // TestFullImageOverNBD generates a full image over NBD with several
 // connections and compares it with the image of the same bytes from memory.
 func TestFullImageOverNBD(t *testing.T) {
-	disk := randomDisk(8*MiB+512, 3)
+	disk := testutil.RandomDisk(8*MiB+512, 3)
 	srv := &nbdtest.Server{Export: "scsi0", Data: disk, MinBlock: 512, PrefBlock: 4096, MaxBlock: 1 << 20}
 	s := open(t, srv, 4)
 
