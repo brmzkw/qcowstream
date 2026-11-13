@@ -264,7 +264,8 @@ func (p *ImagePlan) finish(opts Options) (*ImagePlan, error) {
 	} else if opts.BufferSize%cs != 0 {
 		return nil, invalid("buffer size %d must be a multiple of the cluster size %d", opts.BufferSize, cs)
 	}
-	payload, err := mul64(opts.BufferSize, uint64(opts.Concurrency))
+	// One buffer per read in flight, plus the one being written.
+	payload, err := mul64(opts.BufferSize, uint64(opts.Concurrency)+1)
 	if err != nil {
 		return nil, err
 	}

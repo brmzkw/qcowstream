@@ -8,9 +8,11 @@ import (
 // dataWriter reads data clusters with up to N reads in flight and emits them
 // in guest order.
 //
-// Job i uses slot i mod N. Before issuing job i, job i-N is emitted, which
-// frees its slot: at most N buffers exist, and a slow destination stops new
-// reads. N workers serve the jobs; nothing is spawned per region.
+// The ring has N+1 slots: N for reads, one for the chunk being written, so
+// reading overlaps writing even with N = 1. Job i uses slot i mod (N+1).
+// Before issuing job i, job i-N-1 is emitted, which frees its slot: at most
+// N+1 buffers exist, and a slow destination stops new reads. N workers serve
+// the jobs; nothing is spawned per region.
 type dataWriter struct {
 	e   *emitter
 	src Reader
@@ -44,21 +46,19 @@ func newDataWriter(e *emitter, src Reader, p *ImagePlan) *dataWriter {
 	d := &dataWriter{
 		e: e, src: src, cs: p.geo.clusterSize, vs: p.geo.virtualSize,
 		ctx: ctx, cancel: cancel,
-		slots: make([]job, n),
-		jobs:  make(chan *job, n),
+		slots: make([]job, n+1),
+		jobs:  make(chan *job, n+1),
 	}
 	for i := range d.slots {
 		d.slots[i] = job{buf: make([]byte, p.opts.BufferSize), done: make(chan error, 1)}
 	}
-	d.wg.Add(n)
 	for range n {
-		go d.worker()
+		d.wg.Go(d.worker)
 	}
 	return d
 }
 
 func (d *dataWriter) worker() {
-	defer d.wg.Done()
 	for j := range d.jobs {
 		j.done <- readFull(d.ctx, d.src, j.buf[:j.n], j.off)
 	}

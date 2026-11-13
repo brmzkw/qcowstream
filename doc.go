@@ -26,7 +26,7 @@
 // # Memory
 //
 // The working memory Write controls is the plan, the touched-L1 bitset (at
-// most 512 KiB), one metadata cluster and Concurrency × BufferSize of read
+// most 512 KiB), one metadata cluster and (Concurrency+1) × BufferSize of read
 // buffers. Plan estimates it and returns ErrMemoryBudget beyond
 // Options.MemoryLimit. The destination's buffers, the caller's source and the
 // Go runtime are outside this budget.

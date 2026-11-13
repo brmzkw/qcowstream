@@ -114,8 +114,9 @@ func TestSlowDestinationBoundsReads(t *testing.T) {
 	if _, err := qcowstream.Write(context.Background(), w, r, qcowstream.Extents{}, p); err != nil {
 		t.Fatal(err)
 	}
-	if r.worst > n {
-		t.Fatalf("reads ran %d chunks ahead of the destination, limit %d", r.worst, n)
+	// N reads in flight plus the chunk being written.
+	if r.worst > n+1 {
+		t.Fatalf("reads ran %d chunks ahead of the destination, limit %d", r.worst, n+1)
 	}
 	if r.worst < 2 {
 		t.Fatalf("reads never overlapped (worst %d): concurrency is not used", r.worst)
@@ -200,5 +201,42 @@ func TestConcurrencyCountsInBudget(t *testing.T) {
 	}
 	if est := p.Info().MemoryEstimate; est < 64*MiB || est > qcowstream.DefaultMemoryLimit {
 		t.Fatalf("estimate %d for 16 x 4 MiB buffers", est)
+	}
+}
+
+// overlapProbe records whether a read started while a write was in progress.
+type overlapProbe struct {
+	disk       []byte
+	writing    atomic.Bool
+	overlapped atomic.Bool
+}
+
+func (o *overlapProbe) ReadAtContext(_ context.Context, p []byte, off int64) (int, error) {
+	if o.writing.Load() {
+		o.overlapped.Store(true)
+	}
+	return copy(p, o.disk[off:]), nil
+}
+
+func (o *overlapProbe) Write(p []byte) (int, error) {
+	o.writing.Store(true)
+	time.Sleep(2 * time.Millisecond)
+	o.writing.Store(false)
+	return len(p), nil
+}
+
+func TestSequentialReadOverlapsWrite(t *testing.T) {
+	disk := randomDisk(2*MiB, 14)
+	p, err := qcowstream.Plan(context.Background(), qcowstream.Extents{}, qcowstream.Options{
+		Mode: qcowstream.Full, VirtualSize: uint64(len(disk)), ClusterSize: 64 * KiB, BufferSize: 64 * KiB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &overlapProbe{disk: disk}
+	if _, err := qcowstream.Write(context.Background(), o, o, qcowstream.Extents{}, p); err != nil {
+		t.Fatal(err)
+	}
+	if !o.overlapped.Load() {
+		t.Fatal("with concurrency 1, no read ran while a chunk was being written")
 	}
 }

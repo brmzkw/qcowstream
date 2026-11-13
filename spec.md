@@ -542,9 +542,10 @@ The output is one ordered stream, so concurrency only applies to source reads.
   `max(4 MiB, cluster size)`, a multiple of the cluster size). This is the main
   throughput lever on NBD, independently of concurrency.
 - With `Concurrency = N`, up to N chunk reads are in flight, each into its own
-  buffer from a ring of N slots. The emitter waits for slot `i mod N`, writes
-  it, then releases it for job `i + N`. Memory is `N × BufferSize`, counted in
-  the budget. A slow destination stops releasing slots, which stops reads.
+  buffer from a ring of N+1 slots; the extra slot holds the chunk being
+  written, so reading overlaps writing even at N = 1. The emitter waits for
+  slot `i mod (N+1)`, writes it, then releases it for job `i + N + 1`. Memory
+  is `(N+1) × BufferSize`, counted in the budget. A slow destination stops releasing slots, which stops reads.
   Output is identical for any N because order is fixed by guest offset.
 - `go-nbd` serializes requests on one connection. The NBD adapter therefore
   opens a pool of N read connections to the same read-only export, plus one for
@@ -805,7 +806,7 @@ Docker.
       by an instrumented source.
     - A goroutine leak check after cancellation and after a mid-stream source
       error.
-    - The budget rejects N × BufferSize above the limit.
+    - The budget rejects (N+1) × BufferSize above the limit.
 
 12. **`nbdsource: read full exports over NBD`**
     Dial with export name, block-size constraints, request splitting, connection
