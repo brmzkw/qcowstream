@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: fuzz
+        run: |
+          grep -rlE '^func Fuzz' --include='*_test.go' --exclude-dir=integration . |
+          while read -r file; do
+            for f in $(grep -oE '^func Fuzz[A-Za-z0-9_]+' "$file" | sed 's/^func //'); do
+              go test -run='^$' -fuzz="^$f\$" -fuzztime=30s "./$(dirname "$file")"
+            done
+          done
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: integration/go.mod
+      # Integration tests never skip: no Docker fails the job.
+      - run: docker version
+      - run: go vet ./...
+        working-directory: integration
+      - run: go test -v -timeout 30m ./...
+        working-directory: integration
