@@ -146,23 +146,3 @@ func (p *ImagePlan) emitL1(e *emitter, buf []byte) error {
 	}
 	return nil
 }
-
-// emitFullL2 writes the L2 tables of a full image without zero information:
-// guest cluster g maps to data cluster g.
-func (p *ImagePlan) emitFullL2(e *emitter, buf []byte) error {
-	cs, l, g := p.geo.clusterSize, p.layout, p.geo
-	for t := range g.l1Entries {
-		clear(buf)
-		for i := range g.l2Entries {
-			gc := t*g.l2Entries + i
-			if gc >= g.guestClusters {
-				break
-			}
-			binary.BigEndian.PutUint64(buf[i*entryBytes:], (l.dataOffset+gc*cs)|flagCopied)
-		}
-		if err := e.write(buf); err != nil {
-			return err
-		}
-	}
-	return nil
-}

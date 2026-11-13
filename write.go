@@ -54,24 +54,10 @@ func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err er
 	if err := p.emitL1(e, buf); err != nil {
 		return st, err
 	}
-	if p.touchedL1 == nil {
-		if err := p.emitFullL2(e, buf); err != nil {
-			return st, err
-		}
-		d := newDataWriter(e, src, p)
-		defer d.close()
-		defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.emitted }()
-		if err := d.run(0, p.geo.guestClusters); err != nil {
-			return st, err
-		}
-		return st, d.flush()
-	}
-
-	st.Walks++
-	if err := p.emitWalkedL2(e, buf, ext); err != nil {
+	st.Walks = p.walks()
+	if err := p.emitL2(e, buf, ext); err != nil {
 		return st, err
 	}
-	st.Walks++
 	d := newDataWriter(e, src, p)
 	defer d.close()
 	defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.emitted }()
@@ -97,10 +83,10 @@ func (p *ImagePlan) unstable(what string) error {
 	return fmt.Errorf("%w: %s; the stream is incomplete", ErrUnstableSource, what)
 }
 
-// emitWalkedL2 walks the region sources and writes the touched L2 tables,
-// one at a time. Data clusters are numbered in guest order, matching the
-// order the data walk emits them.
-func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
+// emitL2 walks the region sources and writes the touched L2 tables, one at
+// a time. Data clusters are numbered in guest order, matching the order the
+// data walk emits them.
+func (p *ImagePlan) emitL2(e *emitter, buf []byte, ext Extents) error {
 	g, l := p.geo, p.layout
 	const none = ^uint64(0)
 	cur, tables, k := none, uint64(0), uint64(0)
@@ -111,11 +97,7 @@ func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
 		tables++
 		return e.write(buf)
 	}
-	incremental := p.opts.Mode == Incremental
 	prints, err := g.walkRuns(e.ctx, ext, func(r clusterRun) error {
-		if r.zero && !incremental {
-			return nil // absent in a full image
-		}
 		end := r.first + r.count
 		if !r.zero && k+r.count > l.dataClusters {
 			return p.unstable("more data clusters than planned")

@@ -15,7 +15,6 @@ type ImagePlan struct {
 	backingFormat string
 	sourceBytes   uint64
 	memory        uint64
-	walks         int
 
 	// touchedL1 marks L1 entries with an L2 table; nil means all of them.
 	touchedL1    bitset
@@ -74,19 +73,22 @@ func (p *ImagePlan) Info() PlanInfo {
 		MemoryLimit:           p.opts.MemoryLimit,
 		BufferSize:            p.opts.BufferSize,
 		Concurrency:           p.opts.Concurrency,
-		PlanWalks:             p.walks,
-		WriteWalks:            p.writeWalks(),
+		PlanWalks:             p.walks(),
+		WriteWalks:            p.walks(),
 	}
 }
 
 // Size returns the exact number of bytes Write emits.
 func (p *ImagePlan) Size() uint64 { return p.layout.imageSize }
 
-func (p *ImagePlan) writeWalks() int {
+// walks returns the walks over the region sources Plan did, which is also
+// the number Write does: Plan validates then counts, Write emits L2 tables
+// then data. Without region sources, no walk touches anything.
+func (p *ImagePlan) walks() int {
 	if p.touchedL1 == nil {
 		return 0
 	}
-	return 2 // L2 tables, then data
+	return 2
 }
 
 // touched reports whether L1 entry j has an L2 table.
@@ -172,15 +174,11 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 		return nil, err
 	}
 
-	incremental := opts.Mode == Incremental
 	touched := newBitset(geo.l1Entries)
 	var data, zero, source uint64
 	prints, err := geo.walkRuns(ctx, ext, func(r clusterRun) error {
 		if r.zero {
 			zero += r.count
-			if !incremental {
-				return nil // absent in a full image: reads as zeros
-			}
 		} else {
 			data += r.count
 			source += geo.runBytes(r)
@@ -191,6 +189,9 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 	if err != nil {
 		return nil, err
 	}
+	if ext.Changed == nil {
+		zero = geo.guestClusters - data // unallocated in a full image
+	}
 	if prints != first {
 		return nil, fmt.Errorf("%w: the region sources differ between two walks; they must be replayable and stable",
 			ErrUnstableSource)
@@ -200,7 +201,7 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 		return nil, err
 	}
 	p := &ImagePlan{
-		geo: geo, layout: lay, sourceBytes: source, zeroClusters: zero, walks: 2,
+		geo: geo, layout: lay, sourceBytes: source, zeroClusters: zero,
 		touchedL1: touched, prints: prints, backingFormat: backingFormat(opts), hasZeros: ext.Zeros != nil,
 	}
 	return p.finish(opts)

@@ -24,17 +24,23 @@ type walkPrints struct {
 var errStopPull = errors.New("qcowstream: stop pulling zeros")
 
 // walkRuns walks the region sources once and calls fn with data and zero
-// runs in increasing guest order.
+// runs in increasing guest order. Clusters it does not report are absent.
 //
-// The domain is the whole disk for a full image, or the changed regions for
-// an incremental one; each merged changed extent must cover whole clusters,
-// except for an end at the virtual size. Within the domain, a cluster lying
-// entirely inside the merged zero regions is a zero run, the rest is data.
-// The zero source is pulled in lockstep, so both walks stay linear.
+// The domain is the whole disk for a full image (Changed is nil), or the
+// changed regions for an incremental one; each merged changed extent must
+// cover whole clusters, except for an end at the virtual size. Within the
+// domain, a cluster lying entirely inside the merged zero regions is zero,
+// the rest is data. A full image has no backing file, so its zero clusters
+// are reported absent rather than zero. The zero source is pulled in
+// lockstep, so both walks stay linear.
+//
+// Without any region source this walks nothing: it reports the whole disk
+// as one data run.
 func (g geometry) walkRuns(ctx context.Context, ext Extents, fn func(clusterRun) error) (walkPrints, error) {
 	var wp walkPrints
 	z := g.zeroCursor(ctx, ext.Zeros)
 	defer z.stop()
+	full := ext.Changed == nil
 
 	split := func(first, end uint64) error {
 		for pos := first; pos < end; {
@@ -46,8 +52,10 @@ func (g geometry) walkRuns(ctx context.Context, ext Extents, fn func(clusterRun)
 			case z.ok && z.lo < end:
 				r.count = z.lo - pos
 			}
-			if err := fn(r); err != nil {
-				return err
+			if !(r.zero && full) {
+				if err := fn(r); err != nil {
+					return err
+				}
 			}
 			pos += r.count
 		}
@@ -55,7 +63,7 @@ func (g geometry) walkRuns(ctx context.Context, ext Extents, fn func(clusterRun)
 	}
 
 	var err error
-	if ext.Changed == nil {
+	if full {
 		err = split(0, g.guestClusters)
 	} else {
 		cs := g.clusterSize
@@ -79,7 +87,7 @@ func (g geometry) walkRuns(ctx context.Context, ext Extents, fn func(clusterRun)
 type zeroCursor struct {
 	g      geometry
 	next   func() (Extent, bool)
-	stopFn func()
+	stop   func()
 	fp     Fingerprint
 	err    error
 	lo, hi uint64
@@ -90,7 +98,7 @@ func (g geometry) zeroCursor(ctx context.Context, src ExtentSource) *zeroCursor 
 	z := &zeroCursor{g: g}
 	if src == nil {
 		z.next = func() (Extent, bool) { return Extent{}, false }
-		z.stopFn = func() {}
+		z.stop = func() {}
 		return z
 	}
 	seq := func(yield func(Extent) bool) {
@@ -101,7 +109,7 @@ func (g geometry) zeroCursor(ctx context.Context, src ExtentSource) *zeroCursor 
 			return nil
 		})
 	}
-	z.next, z.stopFn = iter.Pull(seq)
+	z.next, z.stop = iter.Pull(seq)
 	return z
 }
 
@@ -130,8 +138,6 @@ func (z *zeroCursor) finish() (Fingerprint, error) {
 	}
 	return z.fp, z.err
 }
-
-func (z *zeroCursor) stop() { z.stopFn() }
 
 // aligned reports whether e covers whole clusters.
 func (g geometry) aligned(e Extent) bool {
