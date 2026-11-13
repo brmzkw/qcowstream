@@ -46,6 +46,10 @@ type Options struct {
 	// Bitmap names a QEMU dirty bitmap exported as the meta context
 	// qemu:dirty-bitmap:<Bitmap>. It enables Changed.
 	Bitmap string
+
+	// DetectZeros negotiates base:allocation so Zeros can report regions
+	// that read as zeros. A server without it gives no zero information.
+	DetectZeros bool
 }
 
 // Source is an NBD export opened for reading.
@@ -58,6 +62,7 @@ type Source struct {
 	pool chan *nbd.Conn // read connections; nil entries are redialed
 
 	dirty *statusConn
+	zeros *zeroRegions
 }
 
 // Open connects to the export and checks it.
@@ -97,6 +102,12 @@ func Open(ctx context.Context, opts Options) (*Source, error) {
 		// Negotiate now so a missing bitmap fails before any planning.
 		s.dirty = &statusConn{s: s, context: "qemu:dirty-bitmap:" + opts.Bitmap}
 		if err := s.dirty.acquire(ctx); err != nil {
+			s.Close()
+			return nil, err
+		}
+	}
+	if opts.DetectZeros {
+		if err := s.openZeros(ctx); err != nil {
 			s.Close()
 			return nil, err
 		}
@@ -166,9 +177,9 @@ const (
 	statusBufferSize = 1<<20 + 4096
 )
 
-// MemoryUse returns the scratch memory the source holds for n read
-// connections and one status connection, outside the qcowstream budget.
-func MemoryUse(n int) uint64 { return uint64(n)*readBufferSize + statusBufferSize }
+// MemoryUse returns the most scratch memory the source holds with n read
+// connections and its status connections, outside the qcowstream budget.
+func MemoryUse(n int) uint64 { return uint64(n)*readBufferSize + 3*statusBufferSize }
 
 // interruptOnCancel makes blocked I/O on c fail when ctx is done. The
 // connection is unusable afterwards.
@@ -238,6 +249,12 @@ func (s *Source) ReadAtContext(ctx context.Context, p []byte, off int64) (int, e
 func (s *Source) Close() error {
 	if s.dirty != nil {
 		s.dirty.close()
+	}
+	if s.zeros != nil {
+		s.zeros.alloc.close()
+		if s.zeros.dirty != nil {
+			s.zeros.dirty.close()
+		}
 	}
 	var wg sync.WaitGroup
 	for range s.opts.Connections {
