@@ -18,8 +18,10 @@ type ImagePlan struct {
 	walks         int
 
 	// touchedL1 marks L1 entries with an L2 table; nil means all of them.
-	touchedL1 bitset
-	prints    walkPrints
+	touchedL1    bitset
+	prints       walkPrints
+	zeroClusters uint64
+	hasZeros     bool // planned with a zero source
 }
 
 // PlanInfo describes a plan. All sizes are in bytes.
@@ -33,6 +35,7 @@ type PlanInfo struct {
 
 	GuestClusters         uint64 `json:"guest_clusters"`
 	DataClusters          uint64 `json:"data_clusters"`
+	ZeroClusters          uint64 `json:"zero_clusters"` // known zero: unallocated in a full image, zero-flagged in an incremental
 	L1Entries             uint64 `json:"l1_entries"`
 	L2Tables              uint64 `json:"l2_tables"`
 	RefcountBlocks        uint64 `json:"refcount_blocks"`
@@ -60,6 +63,7 @@ func (p *ImagePlan) Info() PlanInfo {
 		BackingFormat:         p.backingFormat,
 		GuestClusters:         p.geo.guestClusters,
 		DataClusters:          p.layout.dataClusters,
+		ZeroClusters:          p.zeroClusters,
 		L1Entries:             p.geo.l1Entries,
 		L2Tables:              p.layout.l2Clusters,
 		RefcountBlocks:        p.layout.rbClusters,
@@ -79,7 +83,7 @@ func (p *ImagePlan) Info() PlanInfo {
 func (p *ImagePlan) Size() uint64 { return p.layout.imageSize }
 
 func (p *ImagePlan) writeWalks() int {
-	if p.opts.Mode == Full {
+	if p.touchedL1 == nil {
 		return 0
 	}
 	return 2 // L2 tables, then data
@@ -100,9 +104,15 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, canceled(ctx)
 	}
-	if opts.Mode == Incremental {
-		return planIncremental(ctx, ext, opts)
+	if opts.Mode == Full && ext.Zeros == nil {
+		return planFull(opts)
 	}
+	return planWalked(ctx, ext, opts)
+}
+
+// planFull plans a full image without zero information: every guest cluster
+// is data, so no walk is needed.
+func planFull(opts Options) (*ImagePlan, error) {
 	cs := opts.ClusterSize
 	if cs == ClusterSizeAuto {
 		cs = autoClusterSize
@@ -122,20 +132,30 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 	return p.finish(opts)
 }
 
-// planIncremental walks the changed regions twice: once to validate them and
-// find their alignment, which decides the cluster size, and once to count
-// clusters and mark L1 entries at that size. Comparing the fingerprints of
-// both walks rejects sources that cannot replay, before any output.
-func planIncremental(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
-	var align uint64 // 0: no constraint yet
-	first, err := MergeExtents(ctx, ext.Changed, opts.VirtualSize, func(e Extent) error {
-		if a := boundaryAlignment(e, opts.VirtualSize); a != 0 && (align == 0 || a < align) {
-			align = a
+// planWalked walks the region sources twice. The first walk validates them
+// and finds the alignment of the changed regions, which decides the cluster
+// size. The second counts clusters and marks L1 entries at that size.
+// Comparing the fingerprints of both walks rejects sources that cannot
+// replay, before any output.
+func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
+	var first walkPrints
+	var align uint64 // 0: no constraint
+	var err error
+	if ext.Changed != nil {
+		first.changed, err = MergeExtents(ctx, ext.Changed, opts.VirtualSize, func(e Extent) error {
+			if a := boundaryAlignment(e, opts.VirtualSize); a != 0 && (align == 0 || a < align) {
+				align = a
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+	}
+	if ext.Zeros != nil {
+		if first.zeros, err = MergeExtents(ctx, ext.Zeros, opts.VirtualSize, nil); err != nil {
+			return nil, err
+		}
 	}
 	cs, err := chooseClusterSize(opts, align)
 	if err != nil {
@@ -152,18 +172,27 @@ func planIncremental(ctx context.Context, ext Extents, opts Options) (*ImagePlan
 		return nil, err
 	}
 
+	incremental := opts.Mode == Incremental
 	touched := newBitset(geo.l1Entries)
-	var data uint64
+	var data, zero, source uint64
 	prints, err := geo.walkRuns(ctx, ext, func(r clusterRun) error {
-		data += r.count
+		if r.zero {
+			zero += r.count
+			if !incremental {
+				return nil // absent in a full image: reads as zeros
+			}
+		} else {
+			data += r.count
+			source += geo.runBytes(r)
+		}
 		touched.setRange(r.first/geo.l2Entries, (r.first+r.count-1)/geo.l2Entries+1)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if prints.changed != first {
-		return nil, fmt.Errorf("%w: the changed regions differ between two walks; the source must be replayable and stable",
+	if prints != first {
+		return nil, fmt.Errorf("%w: the region sources differ between two walks; they must be replayable and stable",
 			ErrUnstableSource)
 	}
 	lay, err := newLayout(geo, touched.count(), data)
@@ -171,8 +200,8 @@ func planIncremental(ctx context.Context, ext Extents, opts Options) (*ImagePlan
 		return nil, err
 	}
 	p := &ImagePlan{
-		geo: geo, layout: lay, sourceBytes: first.Bytes, walks: 2,
-		touchedL1: touched, prints: prints, backingFormat: "qcow2",
+		geo: geo, layout: lay, sourceBytes: source, zeroClusters: zero, walks: 2,
+		touchedL1: touched, prints: prints, backingFormat: backingFormat(opts), hasZeros: ext.Zeros != nil,
 	}
 	return p.finish(opts)
 }
@@ -190,6 +219,9 @@ func chooseClusterSize(opts Options, align uint64) (uint64, error) {
 			}
 		}
 		return cs, nil
+	}
+	if opts.Mode == Full {
+		return autoClusterSize, nil
 	}
 	cs := uint64(autoClusterSize)
 	if align != 0 {

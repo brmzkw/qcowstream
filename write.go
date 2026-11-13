@@ -25,7 +25,7 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 	if p == nil {
 		return Stats{}, invalid("nil plan")
 	}
-	if (ext.Changed == nil) != (p.opts.Mode == Full) {
+	if (ext.Changed == nil) != (p.opts.Mode == Full) || (ext.Zeros != nil) != p.hasZeros {
 		return Stats{}, invalid("region sources do not match the %v plan", p.opts.Mode)
 	}
 	if s, ok := src.(Sizer); ok && s.Size() != p.geo.virtualSize {
@@ -69,6 +69,9 @@ func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err er
 	}
 	st.Walks++
 	prints, err := p.geo.walkRuns(e.ctx, ext, func(r clusterRun) error {
+		if r.zero {
+			return nil
+		}
 		if d.clusters+r.count > p.layout.dataClusters {
 			return p.unstable("more data clusters than planned")
 		}
@@ -101,9 +104,13 @@ func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
 		tables++
 		return e.write(buf)
 	}
+	incremental := p.opts.Mode == Incremental
 	prints, err := g.walkRuns(e.ctx, ext, func(r clusterRun) error {
+		if r.zero && !incremental {
+			return nil // absent in a full image
+		}
 		end := r.first + r.count
-		if k+r.count > l.dataClusters {
+		if !r.zero && k+r.count > l.dataClusters {
 			return p.unstable("more data clusters than planned")
 		}
 		for gc := r.first; gc < end; {
@@ -119,8 +126,12 @@ func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
 			}
 			tableEnd := min(end, (cur+1)*g.l2Entries)
 			for ; gc < tableEnd; gc++ {
-				binary.BigEndian.PutUint64(buf[(gc%g.l2Entries)*entryBytes:], (l.dataOffset+k*g.clusterSize)|flagCopied)
-				k++
+				entry := flagZero
+				if !r.zero {
+					entry = (l.dataOffset + k*g.clusterSize) | flagCopied
+					k++
+				}
+				binary.BigEndian.PutUint64(buf[(gc%g.l2Entries)*entryBytes:], entry)
 			}
 		}
 		return nil

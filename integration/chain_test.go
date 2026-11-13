@@ -62,7 +62,7 @@ func TestIncrementalChain(t *testing.T) {
 	raw1, ext1 := apply(raw0, 20,
 		change{off: 0, len: 4 * KiB},
 		change{off: 2*MiB - 4*KiB, len: 8 * KiB}, // across an L2 boundary
-		change{off: 5 * MiB, len: 64 * KiB},       // changed again in inc-2
+		change{off: 5 * MiB, len: 64 * KiB},      // changed again in inc-2
 		change{off: 6 * MiB, len: 8 * KiB, zero: true},
 		change{off: 8 * MiB, len: 512}, // partial last cluster
 	)

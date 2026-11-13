@@ -72,6 +72,10 @@ type Extents struct {
 	// Changed lists the regions an incremental image stores. Required in
 	// incremental mode, even when empty; must be nil in full mode.
 	Changed ExtentSource
+	// Zeros optionally lists regions the source guarantees read as zeros.
+	// Clusters entirely inside them are not read. It follows the same
+	// validation and replay rules as Changed.
+	Zeros ExtentSource
 }
 
 func invalid(format string, args ...any) error {

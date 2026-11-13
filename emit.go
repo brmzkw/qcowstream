@@ -10,6 +10,7 @@ import (
 
 const (
 	flagCopied = uint64(1) << 63 // QCOW_OFLAG_COPIED: refcount is exactly 1
+	flagZero   = uint64(1)       // QCOW_OFLAG_ZERO: reads as zeros, never from the backing file
 
 	extBackingFormat = 0xe2792aca
 	extEnd           = 0
