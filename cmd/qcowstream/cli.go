@@ -224,45 +224,57 @@ func (cfg *config) options() (qcowstream.Options, error) {
 	return opts, nil
 }
 
-// source opens the configured source and returns its reader and regions.
-func (c *cli) source(ctx context.Context, cfg *config) (qcowstream.Reader, qcowstream.Extents, uint64, func(), error) {
-	var ext qcowstream.Extents
+// source is an opened disk with its region sources.
+type source struct {
+	reader qcowstream.Reader
+	ext    qcowstream.Extents
+	size   uint64
+	io.Closer
+}
+
+// open opens the configured source.
+func (c *cli) open(ctx context.Context, cfg *config) (*source, error) {
 	if cfg.nbdSocket != "" {
 		s, err := nbdsource.Open(ctx, nbdsource.Options{
 			Socket: cfg.nbdSocket, Export: cfg.export, Connections: cfg.concurrency,
 			Bitmap: cfg.bitmap, DetectZeros: !cfg.noZeroDetection,
 		})
 		if err != nil {
-			return nil, ext, 0, nil, err
+			return nil, err
 		}
-		ext.Changed, ext.Zeros = s.Changed(), s.Zeros()
-		return s, ext, s.Size(), func() { s.Close() }, nil
+		return &source{s, qcowstream.Extents{Changed: s.Changed(), Zeros: s.Zeros()}, s.Size(), s}, nil
 	}
 	f, err := c.openFile(cfg.sourceFile)
 	if err != nil {
-		return nil, ext, 0, nil, err
+		return nil, err
 	}
-	size, err := f.Size()
+	src, err := fileSource(f, cfg)
 	if err != nil {
 		f.Close()
-		return nil, ext, 0, nil, err
 	}
+	return src, err
+}
+
+func fileSource(f file, cfg *config) (*source, error) {
+	size, err := f.Size()
+	if err != nil {
+		return nil, err
+	}
+	src := &source{reader: qcowstream.NewReaderAtSource(f, size), size: size, Closer: f}
 	if cfg.regions != "" {
 		r, err := openRegions(cfg.regions)
 		if err != nil {
-			f.Close()
-			return nil, ext, 0, nil, err
+			return nil, err
 		}
 		if r.virtualSize != size {
-			f.Close()
-			return nil, ext, 0, nil, fmt.Errorf("regions file is for a %d-byte disk, %s is %d bytes", r.virtualSize, cfg.sourceFile, size)
+			return nil, fmt.Errorf("regions file is for a %d-byte disk, %s is %d bytes", r.virtualSize, cfg.sourceFile, size)
 		}
-		ext.Changed = r
+		src.ext.Changed = r
 	}
 	if !cfg.noZeroDetection {
-		ext.Zeros = f.Holes(size)
+		src.ext.Zeros = f.Holes(size)
 	}
-	return qcowstream.NewReaderAtSource(f, size), ext, size, func() { f.Close() }, nil
+	return src, nil
 }
 
 func (c *cli) generate(ctx context.Context, cfg *config) error {
@@ -270,15 +282,15 @@ func (c *cli) generate(ctx context.Context, cfg *config) error {
 	if err != nil {
 		return err
 	}
-	src, ext, size, closeSource, err := c.source(ctx, cfg)
+	src, err := c.open(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer closeSource()
-	opts.VirtualSize = size
+	defer src.Close()
+	opts.VirtualSize = src.size
 
 	start := time.Now()
-	plan, err := qcowstream.Plan(ctx, ext, opts)
+	plan, err := qcowstream.Plan(ctx, src.ext, opts)
 	if err != nil {
 		return err
 	}
@@ -294,7 +306,7 @@ func (c *cli) generate(ctx context.Context, cfg *config) error {
 	if err != nil {
 		return err
 	}
-	st, err := qcowstream.Write(ctx, out, src, ext, plan)
+	st, err := qcowstream.Write(ctx, out, src.reader, src.ext, plan)
 	if err = finish(err); err != nil {
 		return err
 	}

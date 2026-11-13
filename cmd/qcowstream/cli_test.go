@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -292,5 +291,3 @@ func TestParseSize(t *testing.T) {
 		}
 	}
 }
-
-var _ io.Writer = (*bytes.Buffer)(nil)
