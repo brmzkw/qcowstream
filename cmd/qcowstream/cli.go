@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/units"
 	"github.com/brmzkw/qcowstream/nbdsource"
 )
 
@@ -203,18 +204,18 @@ func (cfg *config) options() (qcowstream.Options, error) {
 	opts := qcowstream.Options{Mode: cfg.mode, Concurrency: cfg.concurrency}
 	var err error
 	if cfg.clusterSize != "auto" {
-		if opts.ClusterSize, err = parseSize(cfg.clusterSize); err != nil {
+		if opts.ClusterSize, err = units.Parse(cfg.clusterSize); err != nil {
 			return opts, usagef("--cluster-size: %v", err)
 		}
 		if opts.ClusterSize == qcowstream.ClusterSizeAuto {
 			return opts, usagef("--cluster-size: use auto instead of 0")
 		}
 	}
-	if opts.MemoryLimit, err = parseSize(cfg.memoryLimit); err != nil {
+	if opts.MemoryLimit, err = units.Parse(cfg.memoryLimit); err != nil {
 		return opts, usagef("--memory-limit: %v", err)
 	}
 	if cfg.bufferSize != "" {
-		if opts.BufferSize, err = parseSize(cfg.bufferSize); err != nil {
+		if opts.BufferSize, err = units.Parse(cfg.bufferSize); err != nil {
 			return opts, usagef("--buffer-size: %v", err)
 		}
 	}
@@ -299,8 +300,8 @@ func (c *cli) generate(ctx context.Context, cfg *config) error {
 		return c.printPlan(info, time.Since(start))
 	}
 	fmt.Fprintf(c.stderr, "qcowstream: %s image of %s (%d bytes), %s clusters, %d data clusters to read, output %s (%d bytes)\n",
-		info.Mode, formatIEC(info.VirtualSize), info.VirtualSize, formatIEC(info.ClusterSize), info.DataClusters,
-		formatIEC(info.ImageSize), info.ImageSize)
+		info.Mode, units.IEC(info.VirtualSize), info.VirtualSize, units.IEC(info.ClusterSize), info.DataClusters,
+		units.IEC(info.ImageSize), info.ImageSize)
 
 	out, finish, err := openOutput(cfg.output, cfg.force, c.stdout)
 	if err != nil {
@@ -313,7 +314,7 @@ func (c *cli) generate(ctx context.Context, cfg *config) error {
 	elapsed := time.Since(start)
 	fmt.Fprintf(c.stderr, "qcowstream: wrote %d bytes, read %d source bytes in %s (%s/s)\n",
 		st.BytesWritten, st.SourceBytesRead, elapsed.Round(time.Millisecond),
-		formatIEC(uint64(float64(st.SourceBytesRead)/max(elapsed.Seconds(), 1e-9))))
+		units.IEC(uint64(float64(st.SourceBytesRead)/max(elapsed.Seconds(), 1e-9))))
 	return nil
 }
 
@@ -360,12 +361,12 @@ func (c *cli) printPlan(info qcowstream.PlanInfo, took time.Duration) error {
 		PlanInfo: info,
 		SizeUnit: "bytes",
 		Human: map[string]string{
-			"virtual_size":    formatIEC(info.VirtualSize),
-			"cluster_size":    formatIEC(info.ClusterSize),
-			"image_size":      formatIEC(info.ImageSize),
-			"source_bytes":    formatIEC(info.SourceBytes),
-			"memory_estimate": formatIEC(info.MemoryEstimate),
-			"memory_limit":    formatIEC(info.MemoryLimit),
+			"virtual_size":    units.IEC(info.VirtualSize),
+			"cluster_size":    units.IEC(info.ClusterSize),
+			"image_size":      units.IEC(info.ImageSize),
+			"source_bytes":    units.IEC(info.SourceBytes),
+			"memory_estimate": units.IEC(info.MemoryEstimate),
+			"memory_limit":    units.IEC(info.MemoryLimit),
 		},
 		PlanTime: took.Round(time.Microsecond).String(),
 	}

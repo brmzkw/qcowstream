@@ -21,6 +21,7 @@ import (
 
 	"github.com/brmzkw/qcowstream"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
+	"github.com/brmzkw/qcowstream/internal/units"
 	"github.com/brmzkw/qcowstream/internal/virtual"
 	"github.com/brmzkw/qcowstream/nbdsource"
 )
@@ -28,13 +29,6 @@ import (
 const (
 	nbdSocketEnv  = "QCOWBENCH_NBD_SOCKET"
 	qemuSocketEnv = "QCOWBENCH_QEMU_NBD_SOCKET"
-)
-
-const (
-	KiB = uint64(1) << 10
-	MiB = KiB << 10
-	GiB = MiB << 10
-	TiB = GiB << 10
 )
 
 type result struct {
@@ -56,22 +50,22 @@ type scenario struct {
 
 var scenarios = []scenario{
 	{"plan full 100 TiB, 64 KiB clusters", func() result {
-		return planOnly(qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 100 * TiB, ClusterSize: 64 * KiB})
+		return planOnly(qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 100 * units.TiB, ClusterSize: 64 * units.KiB})
 	}},
 	{"plan full 100 TiB, auto (2 MiB) clusters", func() result {
-		return planOnly(qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 100 * TiB})
+		return planOnly(qcowstream.Extents{}, qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 100 * units.TiB})
 	}},
 	{"plan incremental 100 TiB, 1 Mi alternating 64 KiB extents", func() result {
-		return planOnly(qcowstream.Extents{Changed: virtual.Strided{Stride: 128 * KiB, Length: 64 * KiB, Count: 1 << 20}},
-			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * TiB, ClusterSize: 64 * KiB, BackingFile: "base.qcow2"})
+		return planOnly(qcowstream.Extents{Changed: virtual.Strided{Stride: 128 * units.KiB, Length: 64 * units.KiB, Count: 1 << 20}},
+			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * units.TiB, ClusterSize: 64 * units.KiB, BackingFile: "base.qcow2"})
 	}},
 	{"plan incremental 100 TiB, 12.8 M alternating 4 MiB extents", func() result {
-		return planOnly(qcowstream.Extents{Changed: virtual.Strided{Stride: 8 * MiB, Length: 4 * MiB, Count: 12_800_000}},
-			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * TiB, BackingFile: "base.qcow2"})
+		return planOnly(qcowstream.Extents{Changed: virtual.Strided{Stride: 8 * units.MiB, Length: 4 * units.MiB, Count: 12_800_000}},
+			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * units.TiB, BackingFile: "base.qcow2"})
 	}},
 	{"write incremental 100 TiB, 100 x 4 MiB regions", func() result {
-		return generate(virtual.Disk{Len: 100 * TiB}, qcowstream.Extents{Changed: virtual.Strided{Start: GiB, Stride: TiB, Length: 4 * MiB, Count: 100}},
-			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * TiB, BackingFile: "base.qcow2"})
+		return generate(virtual.Disk{Len: 100 * units.TiB}, qcowstream.Extents{Changed: virtual.Strided{Start: units.GiB, Stride: units.TiB, Length: 4 * units.MiB, Count: 100}},
+			qcowstream.Options{Mode: qcowstream.Incremental, VirtualSize: 100 * units.TiB, BackingFile: "base.qcow2"})
 	}},
 	{"write full 16 GiB virtual disk, concurrency 1", func() result { return fullVirtual(1) }},
 	{"write full 16 GiB virtual disk, concurrency 4", func() result { return fullVirtual(4) }},
@@ -112,8 +106,8 @@ func generate(src qcowstream.Reader, ext qcowstream.Extents, opts qcowstream.Opt
 }
 
 func fullVirtual(n int) result {
-	return generate(virtual.Disk{Len: 16 * GiB}, qcowstream.Extents{},
-		qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 16 * GiB, Concurrency: n})
+	return generate(virtual.Disk{Len: 16 * units.GiB}, qcowstream.Extents{},
+		qcowstream.Options{Mode: qcowstream.Full, VirtualSize: 16 * units.GiB, Concurrency: n})
 }
 
 // fullNBD reads from the test server the parent process runs, so the
@@ -141,7 +135,7 @@ func startQemuNBD(size uint64) (string, func()) {
 	raw := filepath.Join(dir, "disk.raw")
 	f, err := os.Create(raw)
 	check(err)
-	buf := make([]byte, 4*MiB)
+	buf := make([]byte, 4*units.MiB)
 	for range size / uint64(len(buf)) {
 		_, _ = rand.Read(buf)
 		_, err := f.Write(buf)
@@ -197,11 +191,11 @@ func main() {
 	}
 	self, err := os.Executable()
 	check(err)
-	srv := &nbdtest.Server{Export: "scsi0", Size: 2 * GiB, MinBlock: 512, PrefBlock: 4096, MaxBlock: 32 << 20}
+	srv := &nbdtest.Server{Export: "scsi0", Size: 2 * units.GiB, MinBlock: 512, PrefBlock: 4096, MaxBlock: 32 << 20}
 	sock, stop, err := srv.Listen()
 	check(err)
 	defer stop()
-	qemuSock, stopQemu := startQemuNBD(2 * GiB)
+	qemuSock, stopQemu := startQemuNBD(2 * units.GiB)
 	defer stopQemu()
 	var results []result
 	for _, s := range scenarios {
@@ -220,7 +214,7 @@ func main() {
 		if ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage); ok {
 			r.RSS = uint64(ru.Maxrss)
 			if runtime.GOOS == "linux" {
-				r.RSS *= 1024 // KiB on Linux, bytes on macOS
+				r.RSS *= 1024 // units.KiB on Linux, bytes on macOS
 			}
 		}
 		results = append(results, r)
@@ -235,21 +229,10 @@ func report(rs []result) {
 		write, tput := "-", "-"
 		if r.WriteTime > 0 {
 			write = fmt.Sprintf("%.2f s", r.WriteTime)
-			tput = fmt.Sprintf("%.0f MiB/s", float64(r.SourceBytes)/float64(MiB)/r.WriteTime)
+			tput = fmt.Sprintf("%.0f MiB/s", float64(r.SourceBytes)/float64(units.MiB)/r.WriteTime)
 		}
 		fmt.Printf("| %s | %d | %.1f ms | %s | %s | %s | %s | %s |\n", r.Name, r.Walks, r.PlanTime, write, tput,
-			iec(r.Estimate), iec(r.Allocated), iec(r.RSS))
+			units.IEC(r.Estimate), units.IEC(r.Allocated), units.IEC(r.RSS))
 	}
 	fmt.Printf("\nMeasured on %s/%s, %d CPUs, %s.\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), strings.TrimPrefix(runtime.Version(), "go"))
-}
-
-func iec(n uint64) string {
-	switch {
-	case n >= GiB:
-		return fmt.Sprintf("%.2f GiB", float64(n)/float64(GiB))
-	case n >= MiB:
-		return fmt.Sprintf("%.1f MiB", float64(n)/float64(MiB))
-	default:
-		return fmt.Sprintf("%.0f KiB", float64(n)/float64(KiB))
-	}
 }
