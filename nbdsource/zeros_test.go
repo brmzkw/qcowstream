@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/brmzkw/qcowstream"
+	"github.com/brmzkw/qcowstream/internal/nbdtest"
 	"github.com/brmzkw/qcowstream/internal/qcow2test"
 	"github.com/brmzkw/qcowstream/nbdsource"
-	"github.com/brmzkw/qcowstream/internal/nbdtest"
 )
 
 func openZeros(t *testing.T, srv *nbdtest.Server, bitmap string) *nbdsource.Source {

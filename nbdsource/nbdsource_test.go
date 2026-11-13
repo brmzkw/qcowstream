@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/brmzkw/qcowstream"
-	"github.com/brmzkw/qcowstream/nbdsource"
 	"github.com/brmzkw/qcowstream/internal/nbdtest"
+	"github.com/brmzkw/qcowstream/nbdsource"
 )
 
 const (
