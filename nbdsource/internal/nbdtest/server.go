@@ -80,6 +80,8 @@ type Extent struct {
 type Server struct {
 	Export string
 	Data   []byte
+	// Size overrides len(Data); bytes past Data read as zeros.
+	Size uint64
 
 	// Block size constraints; MaxBlock 0 sends no NBD_INFO_BLOCK_SIZE.
 	MinBlock, PrefBlock, MaxBlock uint32
@@ -289,7 +291,7 @@ func (cn *conn) options() (done bool, err error) {
 			}
 			var info [12]byte
 			be.PutUint16(info[0:], infoExport)
-			be.PutUint64(info[2:], uint64(len(s.Data)))
+			be.PutUint64(info[2:], s.size())
 			be.PutUint16(info[10:], txHasFlags|txReadOnly|txMultiConn)
 			if err = cn.optReply(opt, repInfo, info[:]); err != nil {
 				return true, err
@@ -391,6 +393,22 @@ func (cn *conn) chunk(cookie uint64, flags, typ uint16, payload []byte) error {
 	return err
 }
 
+func (s *Server) size() uint64 {
+	if s.Size != 0 {
+		return s.Size
+	}
+	return uint64(len(s.Data))
+}
+
+// bytes returns the content of [off, off+n), zeros past Data.
+func (s *Server) bytes(off, n uint64) []byte {
+	b := make([]byte, n)
+	if off < uint64(len(s.Data)) {
+		copy(b, s.Data[off:])
+	}
+	return b
+}
+
 // allowed reports whether [off, off+length) lies inside the dirty regions,
 // or anywhere when there is no bitmap.
 func (s *Server) allowed(off, length uint64) bool {
@@ -408,7 +426,7 @@ func (s *Server) allowed(off, length uint64) bool {
 func (cn *conn) read(cookie, off, length uint64) error {
 	s := cn.s
 	switch {
-	case off+length > uint64(len(s.Data)) || length == 0:
+	case off+length > s.size() || length == 0:
 		s.violate("READ [%d, +%d) outside the export", off, length)
 		return cn.fail(cookie, errInval)
 	case s.MaxBlock != 0 && length > uint64(s.MaxBlock):
@@ -424,7 +442,7 @@ func (cn *conn) read(cookie, off, length uint64) error {
 	s.mu.Lock()
 	s.reads = append(s.reads, Extent{off, length})
 	s.mu.Unlock()
-	data := s.Data[off : off+length]
+	data := s.bytes(off, length)
 	if !cn.structured {
 		b := make([]byte, 16+len(data))
 		be.PutUint32(b[0:], simpleMagic)
@@ -441,7 +459,7 @@ func (cn *conn) read(cookie, off, length uint64) error {
 		}
 		payload := make([]byte, 8+part.n)
 		be.PutUint64(payload, part.off)
-		copy(payload[8:], s.Data[part.off:part.off+part.n])
+		copy(payload[8:], s.bytes(part.off, part.n))
 		var flags uint16
 		if i == 1 || half == 0 {
 			flags = replyFlagDone
@@ -485,7 +503,7 @@ func (cn *conn) blockStatus(cookie, off, length uint64) error {
 	if !cn.structured || (cn.ctxBitmap == 0 && cn.ctxAlloc == 0) {
 		return cn.fail(cookie, errInval)
 	}
-	if off+length > uint64(len(s.Data)) || length == 0 {
+	if off+length > s.size() || length == 0 {
 		s.violate("BLOCK_STATUS [%d, +%d) outside the export", off, length)
 		return cn.fail(cookie, errInval)
 	}

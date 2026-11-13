@@ -42,6 +42,10 @@ type Options struct {
 	// Connections is the number of read connections, for concurrent reads.
 	// Default 1.
 	Connections int
+
+	// Bitmap names a QEMU dirty bitmap exported as the meta context
+	// qemu:dirty-bitmap:<Bitmap>. It enables Changed.
+	Bitmap string
 }
 
 // Source is an NBD export opened for reading.
@@ -52,6 +56,8 @@ type Source struct {
 	maxBlock uint64 // largest read request, a multiple of minBlock
 
 	pool chan *nbd.Conn // read connections; nil entries are redialed
+
+	dirty *statusConn
 }
 
 // Open connects to the export and checks it.
@@ -87,7 +93,25 @@ func Open(ctx context.Context, opts Options) (*Source, error) {
 	for range opts.Connections - 1 {
 		s.pool <- nil // dialed on first use
 	}
+	if opts.Bitmap != "" {
+		// Negotiate now so a missing bitmap fails before any planning.
+		s.dirty = &statusConn{s: s, context: "qemu:dirty-bitmap:" + opts.Bitmap}
+		if err := s.dirty.acquire(ctx); err != nil {
+			s.Close()
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// Changed returns the dirty regions of the bitmap, read with
+// NBD_CMD_BLOCK_STATUS, or nil without a bitmap. Each walk queries the whole
+// export again; the bitmap must not change between walks.
+func (s *Source) Changed() qcowstream.ExtentSource {
+	if s.dirty == nil {
+		return nil
+	}
+	return &dirtyRegions{sc: s.dirty}
 }
 
 // dial connects, negotiates and enters transmission. setup runs between
@@ -212,6 +236,9 @@ func (s *Source) ReadAtContext(ctx context.Context, p []byte, off int64) (int, e
 
 // Close closes every connection.
 func (s *Source) Close() error {
+	if s.dirty != nil {
+		s.dirty.close()
+	}
 	var wg sync.WaitGroup
 	for range s.opts.Connections {
 		c := <-s.pool
