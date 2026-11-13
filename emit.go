@@ -105,17 +105,26 @@ func (p *ImagePlan) emitRefcounts(e *emitter, buf []byte) error {
 			return err
 		}
 	}
-	for b := range l.rbClusters {
+	// The layout has exactly ceil(total/rbEntries) blocks. All but the last
+	// are full and identical, so the buffer is filled once for them.
+	fill := func(n uint64) {
 		clear(buf)
-		for i := range p.geo.rbEntries {
-			if b*p.geo.rbEntries+i >= l.total {
-				break
-			}
+		for i := range n {
 			binary.BigEndian.PutUint16(buf[i*refcountBytes:], 1)
 		}
-		if err := e.write(buf); err != nil {
-			return err
+	}
+	full, rest := l.total/p.geo.rbEntries, l.total%p.geo.rbEntries
+	if full > 0 {
+		fill(p.geo.rbEntries)
+		for range full {
+			if err := e.write(buf); err != nil {
+				return err
+			}
 		}
+	}
+	if rest > 0 {
+		fill(rest)
+		return e.write(buf)
 	}
 	return nil
 }
