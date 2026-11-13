@@ -36,7 +36,9 @@ type geometry struct {
 	rbEntries     uint64 // refcount entries per refcount block
 }
 
-func newGeometry(virtualSize, clusterSize uint64) (geometry, error) {
+// newGeometry fails if the L1 table cannot map the disk. align is the
+// alignment of the changed regions, reported in the error.
+func newGeometry(virtualSize, clusterSize, align uint64) (geometry, error) {
 	g := geometry{
 		virtualSize: virtualSize,
 		clusterSize: clusterSize,
@@ -49,6 +51,7 @@ func newGeometry(virtualSize, clusterSize uint64) (geometry, error) {
 	if g.l1Entries > maxL1Bytes/entryBytes {
 		return geometry{}, &GranularityError{
 			ClusterSize:    clusterSize,
+			Alignment:      align,
 			MinClusterSize: minClusterSizeFor(virtualSize),
 			Reason: fmt.Sprintf("a %d-byte disk needs %d L1 entries at this cluster size, QEMU allows %d",
 				virtualSize, g.l1Entries, maxL1Bytes/entryBytes),

@@ -114,15 +114,8 @@ func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
 // planFull plans a full image without zero information: every guest cluster
 // is data, so no walk is needed.
 func planFull(opts Options) (*ImagePlan, error) {
-	cs := opts.ClusterSize
-	if cs == ClusterSizeAuto {
-		cs = autoClusterSize
-	}
-	geo, err := newGeometry(opts.VirtualSize, cs)
+	geo, err := geometryFor(opts, 0)
 	if err != nil {
-		return nil, err
-	}
-	if err := checkHeaderFits(opts, cs); err != nil {
 		return nil, err
 	}
 	lay, err := newLayout(geo, geo.l1Entries, geo.guestClusters)
@@ -158,18 +151,8 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 			return nil, err
 		}
 	}
-	cs, err := chooseClusterSize(opts, align)
+	geo, err := geometryFor(opts, align)
 	if err != nil {
-		return nil, err
-	}
-	geo, err := newGeometry(opts.VirtualSize, cs)
-	if ge, ok := err.(*GranularityError); ok {
-		ge.Alignment = align
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := checkHeaderFits(opts, cs); err != nil {
 		return nil, err
 	}
 
@@ -204,6 +187,24 @@ func planWalked(ctx context.Context, ext Extents, opts Options) (*ImagePlan, err
 		touchedL1: touched, prints: prints, hasZeros: ext.Zeros != nil,
 	}
 	return p.finish(opts)
+}
+
+// geometryFor chooses the cluster size for regions whose boundaries are
+// multiples of align (0 for no constraint) and checks every limit that
+// depends on it.
+func geometryFor(opts Options, align uint64) (geometry, error) {
+	cs, err := chooseClusterSize(opts, align)
+	if err != nil {
+		return geometry{}, err
+	}
+	geo, err := newGeometry(opts.VirtualSize, cs, align)
+	if err != nil {
+		return geometry{}, err
+	}
+	if n := headerBytes(opts.BackingFile, opts.BackingFormat); n > cs {
+		return geometry{}, invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
+	}
+	return geo, nil
 }
 
 // chooseClusterSize picks the cluster size for regions whose boundaries are
@@ -245,26 +246,11 @@ func chooseClusterSize(opts Options, align uint64) (uint64, error) {
 	return cs, nil
 }
 
-func checkHeaderFits(opts Options, cs uint64) error {
-	if n := headerBytes(opts.BackingFile, opts.BackingFormat); n > cs {
-		return invalid("header and backing file name need %d bytes, more than one %d-byte cluster", n, cs)
-	}
-	return nil
-}
-
-// finish records the options with their defaults and checks the budget.
+// finish records the options with their defaults and checks the memory
+// budget.
 func (p *ImagePlan) finish(opts Options) (*ImagePlan, error) {
-	opts.ClusterSize = p.geo.clusterSize
-	if err := p.setResources(&opts); err != nil {
-		return nil, err
-	}
-	p.opts = opts
-	return p, nil
-}
-
-// setResources fills the resource defaults and checks the memory budget.
-func (p *ImagePlan) setResources(opts *Options) error {
 	cs := p.geo.clusterSize
+	opts.ClusterSize = cs
 	if opts.MemoryLimit == 0 {
 		opts.MemoryLimit = DefaultMemoryLimit
 	}
@@ -274,21 +260,22 @@ func (p *ImagePlan) setResources(opts *Options) error {
 	if opts.BufferSize == 0 {
 		opts.BufferSize = max(DefaultBufferSize, cs)
 	} else if opts.BufferSize%cs != 0 {
-		return invalid("buffer size %d must be a multiple of the cluster size %d", opts.BufferSize, cs)
+		return nil, invalid("buffer size %d must be a multiple of the cluster size %d", opts.BufferSize, cs)
 	}
 	payload, err := mul64(opts.BufferSize, uint64(opts.Concurrency))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Fixed overhead covers the plan and the walkers; one cluster buffers
 	// metadata while it is emitted.
 	const overhead = 64 << 10
 	p.memory, err = sum(overhead, cs, payload, p.touchedL1.bytes())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if p.memory > opts.MemoryLimit {
-		return &MemoryBudgetError{Required: p.memory, Limit: opts.MemoryLimit}
+		return nil, &MemoryBudgetError{Required: p.memory, Limit: opts.MemoryLimit}
 	}
-	return nil
+	p.opts = opts
+	return p, nil
 }
