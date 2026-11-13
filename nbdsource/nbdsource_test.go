@@ -101,7 +101,7 @@ func TestCancelInterruptsStalledServer(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	_, err := s.ReadAtContext(ctx, make([]byte, 4096), 0)
-	if !errors.Is(err, qcowstream.ErrCanceled) || !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
 	}
 	if time.Since(start) > 2*time.Second {

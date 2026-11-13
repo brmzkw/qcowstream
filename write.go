@@ -35,7 +35,8 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 	st, err := p.write(e, src, ext)
 	st.BytesWritten = e.written
 	if err != nil {
-		return st, err
+		// Sources report cancellation as plain context errors; classify here.
+		return st, ctxErr(ctx, err)
 	}
 	if e.written != p.layout.imageSize {
 		return st, fmt.Errorf("qcowstream: internal error: wrote %d bytes, planned %d", e.written, p.layout.imageSize)

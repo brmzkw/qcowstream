@@ -189,7 +189,8 @@ func interruptOnCancel(ctx context.Context, c *nbd.Conn) func() bool {
 
 func (s *Source) connErr(ctx context.Context, what string, err error) error {
 	if ctx.Err() != nil {
-		return fmt.Errorf("nbdsource: %s: %w: %w", what, qcowstream.ErrCanceled, context.Cause(ctx))
+		// The deadline that interrupted the request is not the cause.
+		return fmt.Errorf("nbdsource: %s: %w", what, context.Cause(ctx))
 	}
 	return fmt.Errorf("nbdsource: %s: %w", what, err)
 }

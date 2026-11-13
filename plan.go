@@ -98,7 +98,9 @@ func (p *ImagePlan) touched(j uint64) bool {
 // Plan validates the options, chooses the geometry and lays out the image. It
 // reads no payload. Every error it can detect is reported here, before any
 // byte is written.
-func Plan(ctx context.Context, ext Extents, opts Options) (*ImagePlan, error) {
+func Plan(ctx context.Context, ext Extents, opts Options) (p *ImagePlan, err error) {
+	// Sources report cancellation as plain context errors; classify here.
+	defer func() { err = ctxErr(ctx, err) }()
 	if err := validateOptions(&opts, ext); err != nil {
 		return nil, err
 	}

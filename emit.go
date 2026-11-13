@@ -32,12 +32,10 @@ func (e *emitter) write(p []byte) error {
 	if err == nil && n < len(p) {
 		err = io.ErrShortWrite
 	}
+	if err = ctxErr(e.ctx, err); errors.Is(err, ErrCanceled) {
+		return err
+	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			if e.ctx.Err() != nil {
-				return canceled(e.ctx)
-			}
-		}
 		return fmt.Errorf("%w after %d bytes: %w", ErrIncompleteWrite, e.written, err)
 	}
 	return nil
