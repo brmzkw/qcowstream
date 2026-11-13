@@ -80,7 +80,7 @@ func TestDirtyRegions(t *testing.T) {
 }
 
 func TestDirtyRegionsLargeDisk(t *testing.T) {
-	// Windows of 1 GiB over a disk larger than 4 GiB: lengths fit uint32.
+	// A disk larger than one 32-bit request: the walk spans two windows.
 	srv := &nbdtest.Server{Export: "scsi0", Size: 5*1024*MiB + 512, Bitmap: "backup",
 		Dirty: []nbdtest.Extent{{Offset: 1023 * MiB, Length: 2 * MiB}, {Offset: 5 * 1024 * MiB, Length: 512}}}
 	s, err := openBitmap(t, srv, "backup")

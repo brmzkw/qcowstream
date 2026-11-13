@@ -12,9 +12,11 @@ import (
 	"github.com/brmzkw/qcowstream"
 )
 
-// statusWindow is the length of one BLOCK_STATUS request. Replies are
-// bounded by the client's scratch buffer whatever the window.
-const statusWindow = 1 << 30
+// statusWindow is the length of one BLOCK_STATUS request: the largest
+// 32-bit length that stays aligned to any block size up to 1 MiB. Replies
+// are bounded by the client's scratch buffer whatever the window, so a large
+// window only saves round trips.
+const statusWindow = 1<<32 - 1<<20
 
 // statusConn is a connection with one negotiated meta context, used for
 // BLOCK_STATUS only. A failed or interrupted walk closes it; the next walk
