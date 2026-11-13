@@ -2,6 +2,7 @@ package qcowstream
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -24,9 +25,6 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 	if p == nil {
 		return Stats{}, invalid("nil plan")
 	}
-	if p.opts.Mode == Incremental {
-		return Stats{}, invalid("writing incremental images is not supported yet")
-	}
 	if (ext.Changed == nil) != (p.opts.Mode == Full) {
 		return Stats{}, invalid("region sources do not match the %v plan", p.opts.Mode)
 	}
@@ -34,7 +32,7 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 		return Stats{}, invalid("source is %d bytes, the plan is for %d", s.Size(), p.geo.virtualSize)
 	}
 	e := &emitter{ctx: ctx, w: dst}
-	st, err := p.write(e, src)
+	st, err := p.write(e, src, ext)
 	st.BytesWritten = e.written
 	if err != nil {
 		return st, err
@@ -45,8 +43,7 @@ func Write(ctx context.Context, dst io.Writer, src Reader, ext Extents, p *Image
 	return st, nil
 }
 
-func (p *ImagePlan) write(e *emitter, src Reader) (Stats, error) {
-	var st Stats
+func (p *ImagePlan) write(e *emitter, src Reader, ext Extents) (st Stats, err error) {
 	buf := make([]byte, p.geo.clusterSize)
 	if err := e.write(p.header(buf)); err != nil {
 		return st, err
@@ -57,13 +54,87 @@ func (p *ImagePlan) write(e *emitter, src Reader) (Stats, error) {
 	if err := p.emitL1(e, buf); err != nil {
 		return st, err
 	}
-	if err := p.emitFullL2(e, buf); err != nil {
+	d := newDataWriter(e, src, p)
+	defer func() { st.SourceBytesRead, st.DataClusters = d.read, d.clusters }()
+	if p.touchedL1 == nil {
+		if err := p.emitFullL2(e, buf); err != nil {
+			return st, err
+		}
+		return st, d.run(0, p.geo.guestClusters)
+	}
+
+	st.Walks++
+	if err := p.emitWalkedL2(e, buf, ext); err != nil {
 		return st, err
 	}
-	d := newDataWriter(e, src, p)
-	err := d.run(0, p.geo.guestClusters)
-	st.SourceBytesRead, st.DataClusters = d.read, d.clusters
-	return st, err
+	st.Walks++
+	prints, err := p.geo.walkRuns(e.ctx, ext, func(r clusterRun) error {
+		if d.clusters+r.count > p.layout.dataClusters {
+			return p.unstable("more data clusters than planned")
+		}
+		return d.run(r.first, r.count)
+	})
+	if err != nil {
+		return st, err
+	}
+	if prints != p.prints || d.clusters != p.layout.dataClusters {
+		return st, p.unstable("the data walk differs from the plan")
+	}
+	return st, nil
+}
+
+func (p *ImagePlan) unstable(what string) error {
+	return fmt.Errorf("%w: %s; the stream is incomplete", ErrUnstableSource, what)
+}
+
+// emitWalkedL2 walks the region sources and writes the touched L2 tables,
+// one at a time. Data clusters are numbered in guest order, matching the
+// order the data walk emits them.
+func (p *ImagePlan) emitWalkedL2(e *emitter, buf []byte, ext Extents) error {
+	g, l := p.geo, p.layout
+	const none = ^uint64(0)
+	cur, tables, k := none, uint64(0), uint64(0)
+	flush := func() error {
+		if cur == none {
+			return nil
+		}
+		tables++
+		return e.write(buf)
+	}
+	prints, err := g.walkRuns(e.ctx, ext, func(r clusterRun) error {
+		end := r.first + r.count
+		if k+r.count > l.dataClusters {
+			return p.unstable("more data clusters than planned")
+		}
+		for gc := r.first; gc < end; {
+			if t := gc / g.l2Entries; t != cur {
+				if err := flush(); err != nil {
+					return err
+				}
+				if tables >= l.l2Clusters || !p.touched(t) {
+					return p.unstable("an L2 table that was not planned")
+				}
+				cur = t
+				clear(buf)
+			}
+			tableEnd := min(end, (cur+1)*g.l2Entries)
+			for ; gc < tableEnd; gc++ {
+				binary.BigEndian.PutUint64(buf[(gc%g.l2Entries)*entryBytes:], (l.dataOffset+k*g.clusterSize)|flagCopied)
+				k++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	if prints != p.prints || tables != l.l2Clusters || k != l.dataClusters {
+		return p.unstable("the L2 walk differs from the plan")
+	}
+	return nil
 }
 
 // dataWriter reads runs of data clusters and emits them in guest order.
